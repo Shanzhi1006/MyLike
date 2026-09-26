@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MyLike - 个人素材库</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.1/css/all.min.css">
+</head>
+
+<body>
+    <nav class="navbar">
+        <div class="nav-brand">
+            <i class="fas fa-heart"></i>
+            <span>MyLike</span>
+        </div>
+        <div class="nav-links">
+            <a href="/import" class="nav-link" data-page="import"><i class="fas fa-download"></i> 导入</a>
+            <a href="/library" class="nav-link" data-page="library"><i class="fas fa-th"></i> 素材库</a>
+            <a href="/planner" class="nav-link" data-page="planner"><i class="fas fa-table-cells-large"></i> 策划</a>
+            <a href="/tags" class="nav-link" data-page="tags"><i class="fas fa-tags"></i> 标签管理</a>
+        </div>
+    </nav>
+    <main class="main-content">
+        {% block content %}{% endblock %}
+    </main>
+    <script src="/static/js/app.js"></script>
+    <script src="/static/js/utils.js"></script>
+    {% block scripts %}{% endblock %}
+</body>
+
+</html>

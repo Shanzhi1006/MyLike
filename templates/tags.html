@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="tags-page">
+    <div class="tags-layout">
+        <div class="tags-sidebar">
+            <div class="sidebar-header">
+                <h3>标签维度</h3>
+                <div class="sidebar-actions">
+                    <button class="btn btn-sm btn-primary" onclick="showCreateDimension()">+ 新增维度</button>
+                </div>
+            </div>
+            <div id="dimensions-list" class="dimensions-list"></div>
+        </div>
+
+
+        <div class="tags-main">
+            <div class="sidebar-header">
+                <h3 id="tags-title">标签</h3>
+                <div class="sidebar-actions" id="tags-actions"></div>
+            </div>
+            <div id="tags-detail" class="tags-detail">
+                <div class="empty">请选择左侧维度查看标签</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+<div id="dim-modal" class="modal" style="display:none;">
+    <div class="modal-content modal-sm">
+        <div class="modal-header">
+            <h3 id="dim-modal-title">新增维度</h3>
+            <button class="modal-close" onclick="closeDimModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <input type="text" id="dim-name-input" class="text-input" placeholder="维度名称（如：场景、风格、主题）">
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-primary btn-sm" onclick="confirmDimModal()">确认</button>
+            <button class="btn btn-secondary btn-sm" onclick="closeDimModal()">取消</button>
+        </div>
+    </div>
+</div>
+
+
+<div id="tag-modal" class="modal" style="display:none;">
+    <div class="modal-content modal-sm">
+        <div class="modal-header">
+            <h3 id="tag-modal-title">新增标签</h3>
+            <button class="modal-close" onclick="closeTagModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <input type="text" id="tag-name-input" class="text-input" placeholder="标签名称">
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-primary btn-sm" onclick="confirmTagModal()">确认</button>
+            <button class="btn btn-secondary btn-sm" onclick="closeTagModal()">取消</button>
+        </div>
+    </div>
+</div>
+
+
+<div id="confirm-modal-tags" class="modal" style="display:none;">
+    <div class="modal-content modal-sm">
+        <div class="modal-header">
+            <h3 id="confirm-tags-title">确认删除</h3>
+            <button class="modal-close" onclick="closeConfirmTags()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <p id="confirm-tags-message">确定要删除吗？</p>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-danger btn-sm" id="confirm-tags-yes">确认删除</button>
+            <button class="btn btn-secondary btn-sm" onclick="closeConfirmTags()">取消</button>
+        </div>
+    </div>
+</div>
+
+
+<div id="drag-delete-zone" class="drag-delete-zone" style="display:none;">
+    <i class="fas fa-trash-alt"></i>
+    <span>拖到此处删除</span>
+</div>
+{% endblock %}
+
+
+{% block scripts %}
+<script src="/static/js/tags.js"></script>
+{% endblock %}

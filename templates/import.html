@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="import-page">
+    <div class="import-input-section">
+        <textarea id="import-textarea" class="import-textarea"
+            placeholder="粘贴分享文本，每行一个链接...&#10;&#10;示例:&#10;抖音分享链接... https://v.douyin.com/xxx&#10;小红书分享链接... https://xhslink.cn/xxx"></textarea>
+        <div class="import-actions">
+            <button id="import-btn" class="btn btn-primary" onclick="startImport()">开始导入</button>
+            <button class="btn btn-secondary" onclick="clearImport()">清空</button>
+        </div>
+    </div>
+
+
+    <div id="import-tasks" class="import-tasks"></div>
+</div>
+{% endblock %}
+
+
+{% block scripts %}
+<script src="/static/js/import.js"></script>
+{% endblock %}
