@@ -1,17 +1,7 @@
 from flask import Blueprint, jsonify, request
 
-from db import (
-    create_dimension,
-    create_tag,
-    delete_dimension,
-    delete_tag,
-    get_all_dimensions,
-    get_all_tags,
-    rename_dimension,
-    rename_tag,
-    reorder_dimensions,
-    reorder_tags,
-)
+from db import (create_dimension, create_tag, delete_dimension, delete_tag, get_all_dimensions, get_all_tags,
+                get_conn, rename_dimension, rename_tag, reorder_dimensions, reorder_tags, toggle_tag_star)
 
 bp = Blueprint("tags_api", __name__, url_prefix="/api")
 
@@ -22,12 +12,24 @@ def api_dimensions():
     result = []
     for d in dims:
         tags = get_all_tags(d["id"])
+        tag_ids = [t["id"] for t in tags]
+        work_counts = {}
+        if tag_ids:
+            placeholders = ",".join("?" * len(tag_ids))
+            rows = get_conn().execute(
+                "SELECT tag_id, COUNT(*) AS cnt FROM work_tags WHERE tag_id IN (" + placeholders + ") GROUP BY tag_id",
+                tag_ids,
+            ).fetchall()
+            work_counts = {row["tag_id"]: row["cnt"] for row in rows}
         result.append(
             {
                 "id": d["id"],
                 "name": d["name"],
                 "type": d["type"],
-                "tags": [{"id": t["id"], "name": t["name"], "dimension_id": t["dimension_id"]} for t in tags],
+                "tags": [
+                    {"id": t["id"], "name": t["name"], "dimension_id": t["dimension_id"], "starred": t.get("starred", 0), "work_count": work_counts.get(t["id"], 0)}
+                    for t in tags
+                ],
             }
         )
     return jsonify({"dimensions": result})
@@ -126,5 +128,14 @@ def api_reorder_tags():
     try:
         reorder_tags(tag_ids)
         return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@bp.route("/tags/<int:tag_id>/star", methods=["POST"])
+def api_toggle_tag_star(tag_id):
+    try:
+        starred = toggle_tag_star(tag_id)
+        return jsonify({"success": True, "starred": starred})
     except Exception as e:
         return jsonify({"error": str(e)}), 400

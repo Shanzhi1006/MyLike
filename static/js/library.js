@@ -1,4 +1,4 @@
-var currentTab = 'works';
+var currentTab = localStorage.getItem('library-tab') || 'works';
 var sortOrder = 'desc';
 var tagPickerCallback = null;
 var tagPickerSelected = [];
@@ -33,7 +33,14 @@ function closeImageOverlay() { viewer.close(); }
 
 
 var filterBar = createFilterBar({
-    onChange: function () { pagination[currentTab].page = 1; loadData(); }
+    onChange: function () { pagination[currentTab].page = 1; loadData(); },
+    onStarToggle: function (tagId, starred) {
+        loadDimensions().then(function () {
+            var dims = filterBar.getDimensions();
+            var authorDim = dims.find(function (d) { return d.name === '作者'; });
+            if (authorDim) filterBar.toggleDropdown(authorDim.id);
+        });
+    }
 });
 
 
@@ -41,19 +48,30 @@ function ToggleDropdown(dimId) { closePageSizeMenu(); filterBar.toggleDropdown(d
 function FilterDropdownSearch(dimId, query) { filterBar.filterDropdownSearch(dimId, query); }
 function ToggleFilter(dimId, tagId) { filterBar.toggleFilter(dimId, tagId); }
 function RemoveFilter(dimId, tagId) { filterBar.removeFilter(dimId, tagId); }
+function ToggleTagStar(tagId) { filterBar.toggleTagStar(tagId); }
 function clearFilters() { filterBar.clearFilters(); }
 
 
 function switchTab(tab) {
     currentTab = tab;
+    localStorage.setItem('library-tab', tab);
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
     document.getElementById('works-view').style.display = tab === 'works' ? '' : 'none';
     document.getElementById('materials-view').style.display = tab === 'materials' ? '' : 'none';
+    document.getElementById('uploads-view').style.display = tab === 'uploads' ? '' : 'none';
     document.getElementById('works-pagination').style.display = tab === 'works' ? '' : 'none';
     document.getElementById('materials-pagination').style.display = tab === 'materials' ? '' : 'none';
-    updatePageSizeSelector();
-    pagination[tab].page = 1;
-    loadData();
+    var filterBarEl = document.querySelector('.filter-bar');
+    if (filterBarEl) filterBarEl.style.display = tab === 'uploads' ? 'none' : '';
+    var chipsBar = document.getElementById('filter-chips-bar');
+    if (chipsBar) chipsBar.style.display = 'none';
+    if (tab === 'uploads') {
+        loadPersonalUploads();
+    } else {
+        updatePageSizeSelector();
+        pagination[tab].page = 1;
+        loadData();
+    }
 }
 
 
@@ -214,10 +232,12 @@ function renderWorks(works) {
         if (w.original_url) {
             html += '<div class="work-title"><a href="' + escapeHtml(w.original_url) + '" target="_blank" rel="noopener noreferrer" class="work-title-link">' + escapeHtml(w.title) + '</a></div>';
         } else {
-            html += '<div class="work-title">' + escapeHtml(w.title) + '</div>';
+            html += '<div class="work-title work-title-editable" onclick="editWorkTitle(' + w.id + ', this)" title="点击编辑标题">' + escapeHtml(w.title) + '</div>';
         }
         html += '<div class="work-meta">';
-        const authorClass = w.platform_display === '抖音' ? 'badge-author-douyin' : 'badge-author-xhs';
+        var authorClass = 'badge-author-manual';
+        if (w.platform_display === '抖音') authorClass = 'badge-author-douyin';
+        else if (w.platform_display === '小红书') authorClass = 'badge-author-xhs';
         html += '<span class="badge ' + authorClass + '">' + escapeHtml(w.author_name) + '</span>';
         html += '</div>';
         html += '<div class="work-custom-tags">';
@@ -473,7 +493,9 @@ function renderMaterials(materials) {
             if (t.dimension_name === '类型') return;
             if (t.dimension_name === '平台') return;
             if (t.dimension_name === '作者') {
-                const ac = _platformName === '抖音' ? 'badge-author-douyin' : 'badge-author-xhs';
+                var ac = 'badge-author-manual';
+                if (_platformName === '抖音') ac = 'badge-author-douyin';
+                else if (_platformName === '小红书') ac = 'badge-author-xhs';
                 html += '<span class="badge ' + ac + '">' + escapeHtml(t.name) + '</span>';
             }
         });
@@ -751,6 +773,62 @@ function confirmDeleteWork(id, title) {
 }
 
 
+function editWorkTitle(workId, titleEl) {
+    var oldTitle = titleEl.textContent;
+    var input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'work-title-input';
+    input.value = oldTitle;
+    input.onclick = function (e) { e.stopPropagation(); };
+    titleEl.replaceWith(input);
+    input.focus();
+    input.select();
+
+    var done = false;
+    function finish(save) {
+        if (done) return;
+        done = true;
+        if (save) {
+            var newTitle = input.value.trim();
+            if (!newTitle || newTitle === oldTitle) {
+                restore();
+                return;
+            }
+            fetch('/api/works/' + workId + '/title', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ title: newTitle })
+            }).then(r => r.json()).then(data => {
+                if (data.error) { alert(data.error); restore(); return; }
+                var div = document.createElement('div');
+                div.className = 'work-title work-title-editable';
+                div.title = '点击编辑标题';
+                div.onclick = function () { editWorkTitle(workId, div); };
+                div.textContent = data.title;
+                input.replaceWith(div);
+            }).catch(function () { restore(); });
+        } else {
+            restore();
+        }
+    }
+
+    function restore() {
+        var div = document.createElement('div');
+        div.className = 'work-title work-title-editable';
+        div.title = '点击编辑标题';
+        div.onclick = function () { editWorkTitle(workId, div); };
+        div.textContent = oldTitle;
+        input.replaceWith(div);
+    }
+
+    input.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+        else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+    });
+    input.addEventListener('blur', function () { finish(true); });
+}
+
+
 function confirmDeleteMaterial(id) {
     showConfirm('删除素材', '确定要删除这个素材吗？此操作不可恢复。', function () {
         fetch('/api/materials/' + id, { method: 'DELETE' }).then(r => r.json()).then(() => loadData());
@@ -798,8 +876,16 @@ function openVideo(url, materialId) {
     overlay.className = 'video-overlay';
 
 
+    var speeds = [0.5, 0.75, 1, 1.25, 1.5, 2];
     var html = '<div class="video-main">';
     html += '<video src="' + url + '" controls autoplay></video>';
+    html += '<div class="video-speed-bar">';
+    speeds.forEach(function (s) {
+        var label = (s === 1) ? '1x' : s + 'x';
+        var cls = (s === 1) ? 'video-speed-btn active' : 'video-speed-btn';
+        html += '<button class="' + cls + '" data-rate="' + s + '">' + label + '</button>';
+    });
+    html += '</div>';
     if (materialId) {
         html += '<div class="video-capture-bar">';
         html += '<button class="video-capture-btn" onclick="event.stopPropagation();captureFrame(' + materialId + ')"><i class="fas fa-camera"></i> 截取画面 <span class="capture-shortcut">C</span></button>';
@@ -819,6 +905,23 @@ function openVideo(url, materialId) {
 
 
     var video = overlay.querySelector('video');
+    var speedBtns = overlay.querySelectorAll('.video-speed-btn');
+    var currentRate = 1;
+
+    function setPlaybackRate(rate) {
+        currentRate = rate;
+        if (video) video.playbackRate = rate;
+        speedBtns.forEach(function (btn) {
+            btn.classList.toggle('active', parseFloat(btn.dataset.rate) === rate);
+        });
+    }
+
+    speedBtns.forEach(function (btn) {
+        btn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            setPlaybackRate(parseFloat(btn.dataset.rate));
+        });
+    });
 
 
     function closeOverlay() {
@@ -840,6 +943,14 @@ function openVideo(url, materialId) {
         } else if (e.key === 'c' || e.key === 'C') {
             e.preventDefault();
             if (materialId) captureFrame(materialId);
+        } else if (e.key === ',' || e.key === '<') {
+            e.preventDefault();
+            var idx = speeds.indexOf(currentRate);
+            if (idx > 0) setPlaybackRate(speeds[idx - 1]);
+        } else if (e.key === '.' || e.key === '>') {
+            e.preventDefault();
+            var idx2 = speeds.indexOf(currentRate);
+            if (idx2 < speeds.length - 1) setPlaybackRate(speeds[idx2 + 1]);
         }
     }
 
@@ -1111,13 +1222,29 @@ window.addEventListener('resize', function () {
 });
 
 
-updatePageSizeSelector();
-loadDimensions().then(() => loadData());
+document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === currentTab));
+document.getElementById('works-view').style.display = currentTab === 'works' ? '' : 'none';
+document.getElementById('materials-view').style.display = currentTab === 'materials' ? '' : 'none';
+document.getElementById('uploads-view').style.display = currentTab === 'uploads' ? '' : 'none';
+document.getElementById('works-pagination').style.display = currentTab === 'works' ? '' : 'none';
+document.getElementById('materials-pagination').style.display = currentTab === 'materials' ? '' : 'none';
+var _initFilterBar = document.querySelector('.filter-bar');
+if (_initFilterBar) _initFilterBar.style.display = currentTab === 'uploads' ? 'none' : '';
+
+if (currentTab === 'uploads') {
+    loadPersonalUploads();
+} else {
+    updatePageSizeSelector();
+    loadDimensions().then(() => loadData());
+}
 
 
 document.addEventListener('keydown', function (e) {
     if (e.key !== 'Escape') return;
-    if (document.getElementById('picker-create-modal').style.display !== 'none') {
+    if (document.getElementById('create-work-modal').style.display !== 'none') {
+        closeCreateWorkModal();
+        e.preventDefault();
+    } else if (document.getElementById('picker-create-modal').style.display !== 'none') {
         closePickerCreateModal();
         e.preventDefault();
     } else if (document.getElementById('tag-picker-modal').style.display !== 'none') {
@@ -1126,8 +1253,9 @@ document.addEventListener('keydown', function (e) {
     } else if (document.getElementById('confirm-modal').style.display !== 'none') {
         closeConfirm();
         e.preventDefault();
-    } else if (document.querySelector('.work-row.selected, .material-card.selected')) {
+    } else if (document.querySelector('.work-row.selected, .material-card.selected, .upload-card.selected')) {
         clearSelection();
+        clearUploadSelection();
         e.preventDefault();
     }
 });
@@ -1159,5 +1287,243 @@ document.addEventListener('click', function (e) {
         var menu = document.getElementById('page-size-menu');
         if (menu) menu.style.display = 'none';
     }
+    var cwm = document.getElementById('create-work-modal');
+    if (cwm && e.target === cwm) closeCreateWorkModal();
 });
+
+
+var _createWorkInput = document.getElementById('create-work-title');
+if (_createWorkInput) {
+    _createWorkInput.addEventListener('keydown', function (e) { if (e.key === 'Enter') confirmCreateWork(); });
+}
+
+
+function loadPersonalUploads() {
+    fetch('/api/personal-uploads').then(r => r.json()).then(data => {
+        renderPersonalUploads(data.uploads || []);
+    }).catch(function(err) {
+        console.error('加载上传素材失败:', err);
+        document.getElementById('uploads-grid').innerHTML = '<div class="empty">加载失败</div>';
+    });
+}
+
+
+function renderPersonalUploads(uploads) {
+    var container = document.getElementById('uploads-grid');
+    if (uploads.length === 0) {
+        container.innerHTML = '<div class="empty">暂无上传素材</div>';
+        return;
+    }
+    var galleryList = [];
+    var html = '<div class="uploads-grid-inner">';
+    uploads.forEach(function(m) {
+        html += '<div class="upload-card" data-id="' + m.id + '">';
+        html += '<button class="row-delete-btn" onclick="event.stopPropagation();confirmDeleteUpload(' + m.id + ')"><i class="fas fa-times"></i></button>';
+        if (m.type === 'image') {
+            galleryList.push({ url: m.url, materialId: m.id });
+            html += '<div class="upload-thumb"><img src="' + (m.thumb_url || m.url) + '" loading="lazy" onclick="handleUploadClick(event, this, \'' + m.url + '\', \'image\')"><span class="thumb-badge badge-image">图</span></div>';
+        } else {
+            html += '<div class="upload-thumb"><img src="' + (m.thumb_url || m.url) + '" loading="lazy" onclick="handleUploadClick(event, this, \'' + m.url + '\', \'video\')"><span class="video-icon">&#9658;</span><span class="thumb-badge badge-video">视</span></div>';
+        }
+        html += '<div class="upload-info"><span class="upload-filename" title="' + escapeHtml(m.original_filename) + '">' + escapeHtml(m.original_filename) + '</span></div>';
+        html += '</div>';
+    });
+    html += '</div>';
+    html += '<div class="batch-bar" id="uploads-batch-bar" style="display:none;"><span id="uploads-selected-count"></span><button class="btn btn-sm btn-primary" onclick="showCreateWorkModal()">创建作品</button><button class="btn btn-sm btn-danger" onclick="confirmBatchDeleteUploads()">删除</button><button class="btn btn-sm btn-secondary" onclick="clearUploadSelection()">取消选中</button></div>';
+    container.innerHTML = html;
+    viewer.setGallery(galleryList);
+}
+
+
+function handleUploadClick(e, imgEl, url, type) {
+    e.stopPropagation();
+    if (e.ctrlKey || e.metaKey) {
+        var card = imgEl.closest('.upload-card');
+        if (card) {
+            card.classList.toggle('selected');
+            updateUploadSelectionCount();
+        }
+    } else {
+        if (type === 'image') {
+            openImage(url);
+        } else {
+            openVideo(url, null);
+        }
+    }
+}
+
+
+function updateUploadSelectionCount() {
+    var count = document.querySelectorAll('.upload-card.selected').length;
+    var bar = document.getElementById('uploads-batch-bar');
+    var el = document.getElementById('uploads-selected-count');
+    if (bar) bar.style.display = count > 0 ? '' : 'none';
+    if (el) el.textContent = count > 0 ? '已选 ' + count + ' 个' : '';
+}
+
+
+function getSelectedUploadIds() {
+    return Array.from(document.querySelectorAll('.upload-card.selected')).map(c => parseInt(c.dataset.id));
+}
+
+
+function clearUploadSelection() {
+    document.querySelectorAll('.upload-card.selected').forEach(card => card.classList.remove('selected'));
+    updateUploadSelectionCount();
+}
+
+
+function handleFileSelect(e) {
+    var files = e.target.files;
+    if (!files || files.length === 0) return;
+    uploadFiles(files);
+    e.target.value = '';
+}
+
+
+function uploadFiles(files) {
+    var formData = new FormData();
+    var count = 0;
+    for (var i = 0; i < files.length; i++) {
+        var file = files[i];
+        if (file.type.startsWith('image/') || file.type.startsWith('video/')) {
+            formData.append('files', file);
+            count++;
+        }
+    }
+    if (count === 0) {
+        showToast('未找到支持的文件类型（仅支持图片和视频）', 'error');
+        return;
+    }
+    var dropzone = document.getElementById('upload-dropzone');
+    var progressEl = document.getElementById('upload-progress');
+    var progressBar = document.getElementById('upload-progress-bar');
+    var progressText = document.getElementById('upload-progress-text');
+
+    if (dropzone) dropzone.classList.add('uploading');
+    if (progressEl) progressEl.style.display = '';
+    if (progressBar) progressBar.style.width = '0%';
+    if (progressText) progressText.textContent = '0%';
+
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/personal-uploads/upload');
+
+    xhr.upload.onprogress = function(e) {
+        if (e.lengthComputable) {
+            var percent = Math.round((e.loaded / e.total) * 100);
+            if (progressBar) progressBar.style.width = percent + '%';
+            if (progressText) progressText.textContent = percent + '%';
+        }
+    };
+
+    xhr.upload.onload = function() {
+        if (progressBar) progressBar.style.width = '100%';
+        if (progressEl) progressEl.classList.add('processing');
+        if (progressText) progressText.textContent = '处理中...';
+    };
+
+    xhr.onload = function() {
+        if (dropzone) dropzone.classList.remove('uploading');
+        if (progressEl) { progressEl.style.display = 'none'; progressEl.classList.remove('processing'); }
+        if (progressBar) progressBar.style.width = '0%';
+        try {
+            var data = JSON.parse(xhr.responseText);
+            if (data.error) {
+                showToast(data.error, 'error');
+            } else {
+                showToast('上传成功: ' + data.uploads.length + ' 个文件', 'success');
+                loadPersonalUploads();
+            }
+        } catch (e) {
+            showToast('上传失败', 'error');
+        }
+    };
+
+    xhr.onerror = function() {
+        if (dropzone) dropzone.classList.remove('uploading');
+        if (progressEl) { progressEl.style.display = 'none'; progressEl.classList.remove('processing'); }
+        if (progressBar) progressBar.style.width = '0%';
+        showToast('上传失败', 'error');
+    };
+
+    xhr.send(formData);
+}
+
+
+function initUploadDropzone() {
+    var dropzone = document.getElementById('upload-dropzone');
+    if (!dropzone || dropzone._init) return;
+    dropzone._init = true;
+    dropzone.addEventListener('dragover', function(e) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+        this.classList.add('drag-over');
+    });
+    dropzone.addEventListener('dragleave', function(e) {
+        this.classList.remove('drag-over');
+    });
+    dropzone.addEventListener('drop', function(e) {
+        e.preventDefault();
+        this.classList.remove('drag-over');
+        if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+            uploadFiles(e.dataTransfer.files);
+        }
+    });
+}
+
+
+function confirmDeleteUpload(id) {
+    showConfirm('删除素材', '确定要删除这个上传素材吗？此操作不可恢复。', function () {
+        fetch('/api/personal-uploads/' + id, { method: 'DELETE' }).then(r => r.json()).then(() => loadPersonalUploads());
+    });
+}
+
+
+function confirmBatchDeleteUploads() {
+    var ids = getSelectedUploadIds();
+    if (ids.length === 0) { alert('请先选择素材'); return; }
+    showConfirm('批量删除', '确定要删除选中的 ' + ids.length + ' 个素材吗？此操作不可恢复。', function () {
+        fetch('/api/personal-uploads/batch/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ upload_ids: ids })
+        }).then(r => r.json()).then(() => { clearUploadSelection(); loadPersonalUploads(); });
+    });
+}
+
+
+function showCreateWorkModal() {
+    var ids = getSelectedUploadIds();
+    if (ids.length === 0) { alert('请先选择素材'); return; }
+    document.getElementById('create-work-count').textContent = ids.length;
+    document.getElementById('create-work-title').value = '';
+    document.getElementById('create-work-modal').style.display = 'flex';
+    document.getElementById('create-work-title').focus();
+}
+
+
+function closeCreateWorkModal() {
+    document.getElementById('create-work-modal').style.display = 'none';
+}
+
+
+function confirmCreateWork() {
+    var title = document.getElementById('create-work-title').value.trim();
+    if (!title) { alert('请输入作品标题'); return; }
+    var ids = getSelectedUploadIds();
+    if (ids.length === 0) { alert('请先选择素材'); return; }
+    fetch('/api/personal-uploads/create-work', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: title, upload_ids: ids })
+    }).then(r => r.json()).then(data => {
+        if (data.error) { alert(data.error); return; }
+        closeCreateWorkModal();
+        showToast('作品创建成功', 'success');
+        loadPersonalUploads();
+    });
+}
+
+
+initUploadDropzone();
 

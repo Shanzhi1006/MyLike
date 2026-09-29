@@ -75,7 +75,6 @@ function initDimDragDrop() {
     if (!container || container._dimDragInit) return;
     container._dimDragInit = true;
 
-
     container.addEventListener('dragover', function (e) {
         if (_dragDimId === null) return;
         e.preventDefault();
@@ -100,7 +99,6 @@ function initDimDragDrop() {
             }
         }
     });
-
 
     container.addEventListener('drop', function (e) {
         if (_dragDimId === null) return;
@@ -182,22 +180,79 @@ function renderTagsDetail(dimId) {
     }
     document.getElementById('tags-actions').innerHTML = actionsHtml;
     const container = document.getElementById('tags-detail');
-    let html = '<div class="tags-chips" id="tags-chips-container">';
-    (dim.tags || []).forEach(tag => {
-        html += '<div class="tag-chip tag-chip-draggable"'
-            + ' data-tag-id="' + tag.id + '"'
-            + ' draggable="true" ondragstart="onTagDragStart(event,' + tag.id + ')" ondragend="onTagDragEnd(event)"'
-            + '>';
-        if (dim.type === 'custom') {
-            html += '<span class="tag-chip-name" onclick="showRenameTag(' + tag.id + ',\'' + escapeHtml(tag.name).replace(/'/g, "\\'") + '\')">' + escapeHtml(tag.name) + '</span>';
-        } else {
-            html += '<span class="tag-chip-name">' + escapeHtml(tag.name) + '</span>';
+    var tags = dim.tags || [];
+
+    if (tags.length === 0) {
+        container.innerHTML = '<div class="empty">暂无标签</div>';
+        return;
+    }
+
+    if (dim.name === '作者') {
+        var starredTags = tags.filter(t => t.starred);
+        var otherTags = tags.filter(t => !t.starred);
+        var html = '';
+
+        if (starredTags.length > 0) {
+            html += '<div class="tags-section tags-section-starred">';
+            html += '<div class="tags-section-header"><i class="fas fa-star"></i> 星标作者</div>';
+            html += '<div class="tags-chips" id="tags-chips-starred" data-starred="1">';
+            starredTags.forEach(tag => { html += renderTagChip(tag, dim); });
+            html += '</div>';
+            html += '</div>';
         }
+
+        if (otherTags.length > 0) {
+            html += '<div class="tags-section tags-section-other">';
+            if (starredTags.length > 0) html += '<div class="tags-section-header">其他作者</div>';
+            html += '<div class="tags-chips" id="tags-chips-other" data-starred="0">';
+            otherTags.forEach(tag => { html += renderTagChip(tag, dim); });
+            html += '</div>';
+            html += '</div>';
+        }
+
+        container.innerHTML = html;
+    } else {
+        let html = '<div class="tags-chips" id="tags-chips-container">';
+        tags.forEach(tag => { html += renderTagChip(tag, dim); });
         html += '</div>';
-    });
-    html += '</div>';
-    container.innerHTML = html || '<div class="empty">暂无标签</div>';
+        container.innerHTML = html;
+    }
     initTagDragDrop();
+}
+
+
+function renderTagChip(tag, dim) {
+    var isStarred = tag.starred === 1 || tag.starred === true;
+    var isEmpty = !tag.work_count || tag.work_count === 0;
+    var html = '<div class="tag-chip tag-chip-draggable' + (isStarred ? ' tag-chip-starred' : '') + (isEmpty ? ' tag-chip-empty' : '') + '"'
+        + ' data-tag-id="' + tag.id + '"'
+        + ' draggable="true" ondragstart="onTagDragStart(event,' + tag.id + ')" ondragend="onTagDragEnd(event)"'
+        + '>';
+    if (dim.name === '作者') {
+        html += '<span class="tag-chip-star' + (isStarred ? ' active' : '') + '" onclick="event.stopPropagation();toggleTagStar(' + tag.id + ')"><i class="' + (isStarred ? 'fas' : 'far') + ' fa-star"></i></span>';
+    }
+    if (dim.type === 'custom') {
+        html += '<span class="tag-chip-name" onclick="showRenameTag(' + tag.id + ',\'' + escapeHtml(tag.name).replace(/'/g, "\\'") + '\')">' + escapeHtml(tag.name) + '</span>';
+    } else {
+        html += '<span class="tag-chip-name">' + escapeHtml(tag.name) + '</span>';
+    }
+    if (isEmpty) {
+        html += '</div>';
+    } else {
+        html += '<span class="tag-chip-count">' + tag.work_count + '</span>';
+        html += '</div>';
+    }
+    return html;
+}
+
+
+function toggleTagStar(tagId) {
+    fetch('/api/tags/' + tagId + '/star', { method: 'POST' })
+        .then(r => r.json())
+        .then(data => {
+            if (data.error) { alert(data.error); return; }
+            loadDimensions();
+        });
 }
 
 
@@ -221,81 +276,88 @@ function _clearTagDragOver() {
 
 
 function initTagDragDrop() {
-    var container = document.getElementById('tags-chips-container');
-    if (!container || container._tagDragInit) return;
-    container._tagDragInit = true;
+    document.querySelectorAll('.tags-chips').forEach(function (container) {
+        if (container._tagDragInit) return;
+        container._tagDragInit = true;
 
-
-    container.addEventListener('dragover', function (e) {
-        if (_dragTagId === null) return;
-        e.preventDefault();
-        e.dataTransfer.dropEffect = 'move';
-        _clearTagDragOver();
-        var chip = e.target.closest('.tag-chip-draggable');
-        if (chip && chip.dataset.tagId != _dragTagId) {
-            var rect = chip.getBoundingClientRect();
-            var insertAfter = (e.clientX - rect.left) > rect.width / 2;
-            chip.classList.add(insertAfter ? 'drag-over-right' : 'drag-over');
-        } else if (!chip) {
-            var chips = container.querySelectorAll('.tag-chip-draggable');
-            if (chips.length === 0) return;
-            var firstChip = chips[0];
-            var lastChip = chips[chips.length - 1];
-            var firstRect = firstChip.getBoundingClientRect();
-            var lastRect = lastChip.getBoundingClientRect();
-            if (e.clientX < firstRect.left + firstRect.width / 2 && firstChip.dataset.tagId != _dragTagId) {
-                firstChip.classList.add('drag-over');
-            } else if (e.clientX > lastRect.left + lastRect.width / 2 && lastChip.dataset.tagId != _dragTagId) {
-                lastChip.classList.add('drag-over-right');
+        container.addEventListener('dragover', function (e) {
+            if (_dragTagId === null) return;
+            var draggedInThisContainer = container.querySelector('.tag-chip-draggable[data-tag-id="' + _dragTagId + '"]');
+            if (!draggedInThisContainer) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            _clearTagDragOver();
+            var chip = e.target.closest('.tag-chip-draggable');
+            if (chip && chip.dataset.tagId != _dragTagId) {
+                var rect = chip.getBoundingClientRect();
+                var insertAfter = (e.clientX - rect.left) > rect.width / 2;
+                chip.classList.add(insertAfter ? 'drag-over-right' : 'drag-over');
+            } else if (!chip) {
+                var chips = container.querySelectorAll('.tag-chip-draggable');
+                if (chips.length === 0) return;
+                var firstChip = chips[0];
+                var lastChip = chips[chips.length - 1];
+                var firstRect = firstChip.getBoundingClientRect();
+                var lastRect = lastChip.getBoundingClientRect();
+                if (e.clientX < firstRect.left + firstRect.width / 2 && firstChip.dataset.tagId != _dragTagId) {
+                    firstChip.classList.add('drag-over');
+                } else if (e.clientX > lastRect.left + lastRect.width / 2 && lastChip.dataset.tagId != _dragTagId) {
+                    lastChip.classList.add('drag-over-right');
+                }
             }
-        }
-    });
+        });
 
-
-    container.addEventListener('drop', function (e) {
-        if (_dragTagId === null) return;
-        var chip = e.target.closest('.tag-chip-draggable');
-        if (chip && chip.dataset.tagId == _dragTagId) return;
-        e.preventDefault();
-        e.stopPropagation();
-        _clearTagDragOver();
-        var dim = allDimensions.find(d => d.id === selectedDimId);
-        if (!dim) return;
-        var tags = dim.tags || [];
-        var fromIdx = tags.findIndex(t => t.id === _dragTagId);
-        if (fromIdx < 0) return;
-        var [moved] = tags.splice(fromIdx, 1);
-        if (chip) {
-            var targetId = parseInt(chip.dataset.tagId);
-            var toIdx = tags.findIndex(t => t.id === targetId);
-            if (toIdx < 0) { tags.splice(fromIdx, 0, moved); return; }
-            var rect = chip.getBoundingClientRect();
-            var insertAfter = (e.clientX - rect.left) > rect.width / 2;
-            var adjustedTo = toIdx;
-            if (insertAfter) adjustedTo += 1;
-            tags.splice(adjustedTo, 0, moved);
-        } else {
-            var chips = container.querySelectorAll('.tag-chip-draggable');
-            if (chips.length === 0) { tags.splice(fromIdx, 0, moved); return; }
-            var firstChip = chips[0];
-            var lastChip = chips[chips.length - 1];
-            var firstRect = firstChip.getBoundingClientRect();
-            var lastRect = lastChip.getBoundingClientRect();
-            if (e.clientX < firstRect.left + firstRect.width / 2) {
-                tags.unshift(moved);
-            } else if (e.clientX > lastRect.left + lastRect.width / 2) {
-                tags.push(moved);
+        container.addEventListener('drop', function (e) {
+            if (_dragTagId === null) return;
+            var chip = e.target.closest('.tag-chip-draggable');
+            if (chip && chip.dataset.tagId == _dragTagId) return;
+            e.preventDefault();
+            e.stopPropagation();
+            _clearTagDragOver();
+            var dim = allDimensions.find(d => d.id === selectedDimId);
+            if (!dim) return;
+            var isStarredContainer = container.dataset.starred === '1';
+            var tags;
+            if (dim.name === '作者') {
+                tags = (dim.tags || []).filter(function (t) { return isStarredContainer ? t.starred : !t.starred; });
             } else {
-                tags.splice(fromIdx, 0, moved);
-                return;
+                tags = (dim.tags || []).slice();
             }
-        }
-        var ids = tags.map(t => t.id);
-        fetch('/api/tags/reorder', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ tag_ids: ids })
-        }).then(() => loadDimensions());
+            var fromIdx = tags.findIndex(t => t.id === _dragTagId);
+            if (fromIdx < 0) return;
+            var moved = tags.splice(fromIdx, 1)[0];
+            if (chip) {
+                var targetId = parseInt(chip.dataset.tagId);
+                var toIdx = tags.findIndex(t => t.id === targetId);
+                if (toIdx < 0) { tags.splice(fromIdx, 0, moved); return; }
+                var rect = chip.getBoundingClientRect();
+                var insertAfter = (e.clientX - rect.left) > rect.width / 2;
+                var adjustedTo = toIdx;
+                if (insertAfter) adjustedTo += 1;
+                tags.splice(adjustedTo, 0, moved);
+            } else {
+                var chips = container.querySelectorAll('.tag-chip-draggable');
+                if (chips.length === 0) { tags.splice(fromIdx, 0, moved); return; }
+                var firstChip = chips[0];
+                var lastChip = chips[chips.length - 1];
+                var firstRect = firstChip.getBoundingClientRect();
+                var lastRect = lastChip.getBoundingClientRect();
+                if (e.clientX < firstRect.left + firstRect.width / 2) {
+                    tags.unshift(moved);
+                } else if (e.clientX > lastRect.left + lastRect.width / 2) {
+                    tags.push(moved);
+                } else {
+                    tags.splice(fromIdx, 0, moved);
+                    return;
+                }
+            }
+            var ids = tags.map(t => t.id);
+            fetch('/api/tags/reorder', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tag_ids: ids })
+            }).then(() => loadDimensions());
+        });
     });
 }
 

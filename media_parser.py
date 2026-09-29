@@ -1,4 +1,5 @@
 import json
+import logging
 
 import requests
 
@@ -14,6 +15,8 @@ from config import (
 from thumbnails import generate_all_thumbnails
 from utils import detect_platform, extract_url, get_file_ext, sanitize_filename
 
+logger = logging.getLogger("mylike.media_parser")
+
 
 def call_media_parser(share_url):
     api_url = f"{MEDIA_PARSER_URL}/api/v1/parse"
@@ -21,8 +24,15 @@ def call_media_parser(share_url):
     if API_KEY and API_KEY.strip():
         headers["Authorization"] = f"Bearer {API_KEY}"
     params = {"url": share_url}
-    resp = requests.get(api_url, headers=headers, params=params, timeout=DOWNLOAD_TIMEOUT)
-    resp.raise_for_status()
+    try:
+        resp = requests.get(api_url, headers=headers, params=params, timeout=DOWNLOAD_TIMEOUT)
+        resp.raise_for_status()
+    except requests.exceptions.ConnectionError:
+        raise ConnectionError(f"无法连接到 media-parser 服务 ({MEDIA_PARSER_URL})，请确认服务已启动")
+    except requests.exceptions.Timeout:
+        raise TimeoutError(f"请求 media-parser 服务超时，请稍后重试")
+    except requests.exceptions.HTTPError as e:
+        raise RuntimeError(f"API 请求失败: {e}")
     data = resp.json()
     if data.get("retcode") != 200:
         raise RuntimeError(f"解析失败: {data.get('retdesc', '未知错误')}")

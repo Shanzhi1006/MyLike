@@ -26,7 +26,7 @@
                             class="fas fa-arrow-down-wide-short"></i></span>
                 </button>
                 <div id="p-filter-dimensions" class="filter-dimensions"></div>
-                <button class="btn btn-sm btn-secondary" onclick="pClearFilters()">清除筛选</button>
+                <button class="btn btn-sm btn-secondary filter-clear-btn" onclick="pClearFilters()">清除筛选</button>
             </div>
             <div id="p-filter-chips-bar" class="filter-chips-bar" style="display:none;"></div>
             <div id="planner-search-results" class="planner-search-results">
@@ -37,6 +37,12 @@
 
         <div class="planner-right">
             <div class="planner-right-toolbar">
+                <div class="planner-table-menu-wrapper" id="planner-table-menu-wrapper">
+                    <button class="btn btn-sm btn-secondary planner-table-menu-btn" onclick="pToggleTableMenu(event)" title="表格列表">
+                        <i class="fas fa-list-ul"></i>
+                    </button>
+                    <div class="planner-table-menu-dropdown" id="planner-table-menu" style="display:none;"></div>
+                </div>
                 <span class="planner-right-toolbar-title"><i class="fas fa-table-cells-large"></i> 策划排版</span>
                 <span style="font-size:12px;color:var(--text-muted);">拖拽左侧图片到格子中 · 每个表格独立设置行列数 · 右键单元格可插入/删除行和列</span>
                 <button class="btn btn-sm btn-primary" onclick="pAddTable()"><i class="fas fa-table"></i> 添加表格</button>

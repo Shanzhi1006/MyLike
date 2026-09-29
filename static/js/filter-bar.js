@@ -6,6 +6,7 @@ function createFilterBar(opts) {
     var chipsBarId = opts.chipsBarId || 'filter-chips-bar';
     var skipDimensions = opts.skipDimensions || [];
     var onChange = opts.onChange || function () { };
+    var onStarToggle = opts.onStarToggle || function () { };
 
 
     var dimensions = [];
@@ -57,8 +58,14 @@ function createFilterBar(opts) {
             }
             (dim.tags || []).forEach(function (tag) {
                 var checked = selected.indexOf(tag.id) >= 0;
-                html += '<label class="dd-checkbox' + (checked ? ' checked' : '') + '" data-tag-name="' + escapeHtml(tag.name.toLowerCase()) + '">';
+                var isStarred = tag.starred === 1;
+                var starHtml = '';
+                if (dim.name === '作者') {
+                    starHtml = '<span class="dd-star-btn' + (isStarred ? ' active' : '') + '" onclick="event.stopPropagation();event.preventDefault();' + fnPrefix + 'ToggleTagStar(' + tag.id + ')"><i class="' + (isStarred ? 'fas' : 'far') + ' fa-star"></i></span>';
+                }
+                html += '<label class="dd-checkbox' + (checked ? ' checked' : '') + (isStarred ? ' dd-starred' : '') + '" data-tag-name="' + escapeHtml(tag.name.toLowerCase()) + '">';
                 html += '<input type="checkbox" ' + (checked ? 'checked' : '') + ' onchange="' + fnPrefix + 'ToggleFilter(' + dim.id + ',' + tag.id + ')">';
+                html += starHtml;
                 html += '<span>' + escapeHtml(tag.name) + '</span>';
                 html += '</label>';
             });
@@ -150,6 +157,16 @@ function createFilterBar(opts) {
     }
 
 
+    function toggleTagStar(tagId) {
+        fetch('/api/tags/' + tagId + '/star', { method: 'POST' })
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                if (data.error) return;
+                onStarToggle(tagId, data.starred);
+            });
+    }
+
+
     document.addEventListener('click', function (e) {
         if (openDropdownId !== null) {
             var wrapper = document.getElementById(prefix + 'dd-' + openDropdownId);
@@ -171,7 +188,8 @@ function createFilterBar(opts) {
         filterDropdownSearch: filterDropdownSearch,
         toggleFilter: toggleFilter,
         removeFilter: removeFilter,
-        renderFilterChips: renderFilterChips
+        renderFilterChips: renderFilterChips,
+        toggleTagStar: toggleTagStar
     };
 }
 

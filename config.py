@@ -61,6 +61,7 @@ PLATFORM_NORMALIZE = {
 PLATFORM_DISPLAY = {
     "douyin": "抖音",
     "xiaohongshu": "小红书",
+    "manual": "个人上传",
 }
 
 

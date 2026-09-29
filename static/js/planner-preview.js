@@ -327,11 +327,12 @@ function _capturePreview() {
 
     _swapToOriginalImages();
 
+    var pageEl = document.querySelector('.preview-page');
+    if (pageEl) pageEl.classList.add('exporting');
 
     return _waitForImages().then(function () {
         return new Promise(function (resolve) { setTimeout(resolve, 300); });
     }).then(function () {
-        var pageEl = document.querySelector('.preview-page');
         var scale = _getCaptureScale();
         return html2canvas(pageEl, {
             scale: scale,
@@ -340,10 +341,12 @@ function _capturePreview() {
             logging: false
         });
     }).then(function (canvas) {
+        if (pageEl) pageEl.classList.remove('exporting');
         _restorePreviewImages();
         toolbar.style.display = '';
         return canvas;
     }).catch(function (err) {
+        if (pageEl) pageEl.classList.remove('exporting');
         _restorePreviewImages();
         toolbar.style.display = '';
         throw err;

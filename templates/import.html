@@ -2,19 +2,25 @@
 {% block content %}
 <div class="import-page">
     <div class="import-input-section">
-        <textarea id="import-textarea" class="import-textarea"
-            placeholder="粘贴分享文本，每行一个链接...&#10;&#10;示例:&#10;抖音分享链接... https://v.douyin.com/xxx&#10;小红书分享链接... https://xhslink.cn/xxx"></textarea>
+        <input type="text" id="import-input" class="import-input"
+            placeholder="输入分享文本，回车添加..." />
+        <div class="import-block-list" id="import-block-list">
+            <div class="import-block-empty" id="import-block-empty">
+                <i class="fas fa-clipboard-list"></i>
+                <span>输入或粘贴分享文本，回车添加，可多行粘贴</span>
+            </div>
+        </div>
         <div class="import-actions">
             <button id="import-btn" class="btn btn-primary" onclick="startImport()">开始导入</button>
-            <button class="btn btn-secondary" onclick="clearImport()">清空</button>
+            <button id="delete-selected-btn" class="btn btn-secondary" onclick="deleteSelectedItems()" style="display:none">删除选中</button>
+            <button id="copy-selected-btn" class="btn btn-secondary" onclick="copySelectedItems()" style="display:none">复制选中</button>
+            <button class="btn btn-secondary" onclick="clearAllItems()">清空全部</button>
         </div>
     </div>
-
 
     <div id="import-tasks" class="import-tasks"></div>
 </div>
 {% endblock %}
-
 
 {% block scripts %}
 <script src="/static/js/import.js"></script>

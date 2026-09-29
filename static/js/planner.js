@@ -32,7 +32,14 @@ var pFilterBar = createFilterBar({
     dimensionsContainerId: 'p-filter-dimensions',
     chipsBarId: 'p-filter-chips-bar',
     skipDimensions: ['类型', '平台'],
-    onChange: pLoadMaterials
+    onChange: pLoadMaterials,
+    onStarToggle: function (tagId, starred) {
+        pLoadDimensions().then(function () {
+            var dims = pFilterBar.getDimensions();
+            var authorDim = dims.find(function (d) { return d.name === '作者'; });
+            if (authorDim) pFilterBar.toggleDropdown(authorDim.id);
+        });
+    }
 });
 
 
@@ -40,6 +47,7 @@ function pToggleDropdown(dimId) { pCloseLayoutMenu(); pFilterBar.toggleDropdown(
 function pFilterDropdownSearch(dimId, query) { pFilterBar.filterDropdownSearch(dimId, query); }
 function pToggleFilter(dimId, tagId) { pFilterBar.toggleFilter(dimId, tagId); }
 function pRemoveFilter(dimId, tagId) { pFilterBar.removeFilter(dimId, tagId); }
+function pToggleTagStar(tagId) { pFilterBar.toggleTagStar(tagId); }
 function pClearFilters() { pFilterBar.clearFilters(); }
 
 
@@ -47,11 +55,9 @@ function pMakeDefaultTable(title) {
     return {
         title: title || '',
         remark: null,
-        columns: 5,
+        columns: 4,
         rows: [
-            { height: null, cells: [null, null, null, null, null] },
-            { height: null, cells: [null, null, null, null, null] },
-            { height: null, cells: [null, null, null, null, null] }
+            { height: null, cells: [null, null, null, null] }
         ]
     };
 }
@@ -144,6 +150,8 @@ function pRenderMaterials(materials) {
             }
         }
     });
+
+    pUpdateUsedIndicators();
 }
 
 
@@ -396,7 +404,7 @@ function pRenderGrid() {
 
 
         html += '<div class="planner-table-header">';
-        html += '<input type="text" class="planner-table-title-input" value="' + escapeHtml(table.title) + '" placeholder="表格标题" oninput="pUpdateTableTitle(' + tableIndex + ', this.value)">';
+        html += '<input type="text" class="planner-table-title-input" value="' + escapeHtml(table.title) + '" placeholder="表格标题" oninput="pUpdateTableTitle(' + tableIndex + ', this.value)" onkeydown="pOnInputEnterSave(event)">';
         html += '<div class="planner-table-controls">';
         html += '<span style="font-size:13px;color:var(--text-muted);">列</span>';
         html += '<button class="btn btn-sm btn-secondary" onclick="pChangeColumns(' + tableIndex + ',-1)"><i class="fas fa-minus"></i></button>';
@@ -408,6 +416,10 @@ function pRenderGrid() {
         html += '<span class="planner-cols-display">' + table.rows.length + '</span>';
         html += '<button class="btn btn-sm btn-secondary" onclick="pChangeRows(' + tableIndex + ',1)"><i class="fas fa-plus"></i></button>';
         html += '<span style="width:10px;"></span>';
+        var _isFirst = tableIndex === 0;
+        var _isLast = tableIndex === plannerState.tables.length - 1;
+        html += '<button class="btn btn-sm planner-move-btn"' + (_isFirst ? ' disabled' : '') + ' onclick="pMoveTable(' + tableIndex + ',-1)" title="上移表格"><i class="fas fa-arrow-up"></i></button>';
+        html += '<button class="btn btn-sm planner-move-btn"' + (_isLast ? ' disabled' : '') + ' onclick="pMoveTable(' + tableIndex + ',1)" title="下移表格"><i class="fas fa-arrow-down"></i></button>';
         if (table.remark == null) {
             html += '<button class="btn btn-sm planner-action-btn planner-add-remark-btn" onclick="pAddRemark(' + tableIndex + ')" title="添加备注"><i class="fas fa-comment-dots"></i></button>';
         }
@@ -501,6 +513,9 @@ function pRenderGrid() {
     document.querySelectorAll('.planner-table-remark-input').forEach(function (ta) {
         pAutoResizeTextarea(ta);
     });
+
+    var _tm = document.getElementById('planner-table-menu');
+    if (_tm && _tm.style.display !== 'none') pRenderTableMenu();
 }
 
 
@@ -549,6 +564,222 @@ function pRemoveTable(tableIndex) {
         plannerState.tables.splice(tableIndex, 1);
     }
     pRenderGrid();
+}
+
+
+function pMoveTable(tableIndex, delta) {
+    var newIndex = tableIndex + delta;
+    if (newIndex < 0 || newIndex >= plannerState.tables.length) return;
+
+    var oldPositions = {};
+    plannerState.tables.forEach(function (t, i) {
+        var el = document.getElementById('planner-table-' + i);
+        if (el) oldPositions[i] = el.getBoundingClientRect().top;
+    });
+
+    var tmp = plannerState.tables[tableIndex];
+    plannerState.tables[tableIndex] = plannerState.tables[newIndex];
+    plannerState.tables[newIndex] = tmp;
+
+    pRenderGrid();
+
+    var animatedEls = [];
+    plannerState.tables.forEach(function (t, i) {
+        var el = document.getElementById('planner-table-' + i);
+        if (!el || oldPositions[i] === undefined) return;
+        var newTop = el.getBoundingClientRect().top;
+        var dy = oldPositions[i] - newTop;
+        if (dy === 0) return;
+        el.style.transition = 'none';
+        el.style.transform = 'translateY(' + dy + 'px)';
+        animatedEls.push(el);
+    });
+
+    if (animatedEls.length > 0) {
+        document.getElementById('planner-grid').offsetHeight;
+        animatedEls.forEach(function (el) {
+            el.style.transition = 'transform 0.3s cubic-bezier(0.4, 0, 0.2, 1)';
+            el.style.transform = '';
+        });
+        setTimeout(function () {
+            animatedEls.forEach(function (el) {
+                el.style.transition = '';
+                el.style.transform = '';
+            });
+            var movedEl = document.getElementById('planner-table-' + newIndex);
+            if (movedEl) {
+                movedEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                movedEl.classList.add('planner-table-highlight');
+                setTimeout(function () {
+                    movedEl.classList.remove('planner-table-highlight');
+                }, 800);
+            }
+        }, 320);
+    } else {
+        var movedEl = document.getElementById('planner-table-' + newIndex);
+        if (movedEl) movedEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+}
+
+
+var _pDragTableIdx = null;
+
+
+function pToggleTableMenu(e) {
+    if (e) e.stopPropagation();
+    var menu = document.getElementById('planner-table-menu');
+    var isOpen = menu.style.display !== 'none';
+    if (isOpen) {
+        menu.style.display = 'none';
+    } else {
+        pRenderTableMenu();
+        var wrapper = document.getElementById('planner-table-menu-wrapper');
+        var previewBtn = document.querySelector('.planner-preview-btn');
+        if (wrapper && previewBtn) {
+            var wRect = wrapper.getBoundingClientRect();
+            var pRect = previewBtn.getBoundingClientRect();
+            var available = pRect.top - wRect.bottom - 8;
+            menu.style.maxHeight = Math.max(120, available) + 'px';
+        }
+        menu.style.display = '';
+    }
+}
+
+
+function pCloseTableMenu() {
+    var menu = document.getElementById('planner-table-menu');
+    if (menu) menu.style.display = 'none';
+}
+
+
+function pRenderTableMenu() {
+    var container = document.getElementById('planner-table-menu');
+    if (!container) return;
+    if (plannerState.tables.length === 0) {
+        container.innerHTML = '<div class="planner-table-menu-empty">暂无表格</div>';
+        return;
+    }
+    var html = '';
+    plannerState.tables.forEach(function (table, idx) {
+        var title = table.title || ('\u8868\u683c ' + (idx + 1));
+        html += '<div class="planner-table-menu-item"'
+            + ' data-table-idx="' + idx + '"'
+            + ' draggable="true"'
+            + ' ondragstart="pOnTableDragStart(event,' + idx + ')"'
+            + ' ondragend="pOnTableDragEnd(event)"'
+            + ' onclick="pScrollToTable(' + idx + ')"'
+            + '>';
+        html += '<span class="planner-table-menu-item-title">' + escapeHtml(title) + '</span>';
+        html += '<span class="planner-table-menu-item-handle">&#9776;</span>';
+        html += '</div>';
+    });
+    container.innerHTML = html;
+    pInitTableMenuDragDrop();
+}
+
+
+function pScrollToTable(idx) {
+    pCloseTableMenu();
+    var tableEl = document.getElementById('planner-table-' + idx);
+    if (tableEl) tableEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+
+function pOnTableDragStart(e, idx) {
+    _pDragTableIdx = idx;
+    e.dataTransfer.effectAllowed = 'move';
+    e.target.classList.add('dragging');
+    var zone = document.getElementById('drag-delete-zone');
+    if (zone) zone.style.display = 'flex';
+}
+
+
+function pOnTableDragEnd(e) {
+    document.querySelectorAll('.planner-table-menu-item').forEach(function (el) {
+        el.classList.remove('dragging', 'drag-over', 'drag-over-bottom');
+    });
+    _pDragTableIdx = null;
+    var zone = document.getElementById('drag-delete-zone');
+    if (zone) { zone.style.display = 'none'; zone.classList.remove('drag-over'); }
+}
+
+
+function _pClearTableDragOver() {
+    document.querySelectorAll('.planner-table-menu-item').forEach(function (el) {
+        el.classList.remove('drag-over', 'drag-over-bottom');
+    });
+}
+
+
+function pInitTableMenuDragDrop() {
+    var container = document.getElementById('planner-table-menu');
+    if (!container || container._tableMenuDragInit) return;
+    container._tableMenuDragInit = true;
+
+    container.addEventListener('dragover', function (e) {
+        if (_pDragTableIdx === null) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        _pClearTableDragOver();
+        var items = container.querySelectorAll('.planner-table-menu-item');
+        if (items.length === 0) return;
+        var target = e.target.closest('.planner-table-menu-item');
+        if (target && parseInt(target.dataset.tableIdx) !== _pDragTableIdx) {
+            var rect = target.getBoundingClientRect();
+            var insertAfter = (e.clientY - rect.top) > rect.height / 2;
+            target.classList.add(insertAfter ? 'drag-over-bottom' : 'drag-over');
+        } else if (!target) {
+            var firstItem = items[0];
+            var lastItem = items[items.length - 1];
+            var firstRect = firstItem.getBoundingClientRect();
+            var lastRect = lastItem.getBoundingClientRect();
+            if (e.clientY < firstRect.top + firstRect.height / 2 && parseInt(firstItem.dataset.tableIdx) !== _pDragTableIdx) {
+                firstItem.classList.add('drag-over');
+            } else if (e.clientY > lastRect.top + lastRect.height / 2 && parseInt(lastItem.dataset.tableIdx) !== _pDragTableIdx) {
+                lastItem.classList.add('drag-over-bottom');
+            }
+        }
+    });
+
+    container.addEventListener('drop', function (e) {
+        if (_pDragTableIdx === null) return;
+        e.preventDefault();
+        e.stopPropagation();
+        _pClearTableDragOver();
+        var fromIdx = _pDragTableIdx;
+        var items = container.querySelectorAll('.planner-table-menu-item');
+        if (items.length === 0) return;
+        var target = e.target.closest('.planner-table-menu-item');
+        var moved = plannerState.tables.splice(fromIdx, 1)[0];
+        if (target && parseInt(target.dataset.tableIdx) !== fromIdx) {
+            var targetIdx = parseInt(target.dataset.tableIdx);
+            var reducedTargetIdx = targetIdx > fromIdx ? targetIdx - 1 : targetIdx;
+            var rect = target.getBoundingClientRect();
+            var insertAfter = (e.clientY - rect.top) > rect.height / 2;
+            var adjustedTo = insertAfter ? reducedTargetIdx + 1 : reducedTargetIdx;
+            plannerState.tables.splice(adjustedTo, 0, moved);
+        } else if (!target) {
+            var firstItem = items[0];
+            var lastItem = items[items.length - 1];
+            var firstRect = firstItem.getBoundingClientRect();
+            var lastRect = lastItem.getBoundingClientRect();
+            if (e.clientY < firstRect.top + firstRect.height / 2) {
+                if (parseInt(firstItem.dataset.tableIdx) === fromIdx) { plannerState.tables.splice(fromIdx, 0, moved); return; }
+                plannerState.tables.unshift(moved);
+            } else if (e.clientY > lastRect.top + lastRect.height / 2) {
+                if (parseInt(lastItem.dataset.tableIdx) === fromIdx) { plannerState.tables.splice(fromIdx, 0, moved); return; }
+                plannerState.tables.push(moved);
+            } else {
+                plannerState.tables.splice(fromIdx, 0, moved);
+                return;
+            }
+        } else {
+            plannerState.tables.splice(fromIdx, 0, moved);
+            return;
+        }
+        _pDragTableIdx = null;
+        pRenderGrid();
+    });
 }
 
 
@@ -660,7 +891,17 @@ function pChangeColumns(tableIndex, delta) {
 
 function pDeleteRow(tableIndex, rowIndex) {
     var table = plannerState.tables[tableIndex];
-    if (!table || table.rows.length <= 1) return;
+    if (!table) return;
+    if (table.rows.length <= 1) {
+        var row = table.rows[rowIndex];
+        if (!row) return;
+        for (var i = 0; i < row.cells.length; i++) row.cells[i] = null;
+        row.height = null;
+        row.heightRatio = null;
+        row.snapAspectRatio = null;
+        pRenderGrid();
+        return;
+    }
     table.rows.splice(rowIndex, 1);
     table.rows.forEach(function (row, i) {
         row.height = null;
@@ -673,7 +914,17 @@ function pDeleteRow(tableIndex, rowIndex) {
 
 function pDeleteColumn(tableIndex, colIndex) {
     var table = plannerState.tables[tableIndex];
-    if (!table || table.columns <= 1) return;
+    if (!table) return;
+    if (table.columns <= 1) {
+        table.rows.forEach(function (row) {
+            if (row.cells[colIndex]) row.cells[colIndex] = null;
+            row.height = null;
+            row.heightRatio = null;
+            row.snapAspectRatio = null;
+        });
+        pRenderGrid();
+        return;
+    }
     table.rows.forEach(function (row) {
         row.cells.splice(colIndex, 1);
         row.height = null;
@@ -697,15 +948,11 @@ function pOnCellContextMenu(event, tableIndex, rowIndex, cellIndex) {
     var items = [];
     items.push({ label: '在此前插入行', icon: 'fa-arrow-up', action: function () { pInsertRow(tableIndex, rowIndex); } });
     items.push({ label: '在此后插入行', icon: 'fa-arrow-down', action: function () { pInsertRow(tableIndex, rowIndex + 1); } });
-    if (table.rows.length > 1) {
-        items.push({ label: '删除此行', icon: 'fa-trash', danger: true, action: function () { pDeleteRow(tableIndex, rowIndex); } });
-    }
+    items.push({ label: '删除此行', iconStack: { base: 'fa-trash', overlay: 'fa-left-right' }, danger: true, action: function () { pDeleteRow(tableIndex, rowIndex); } });
     items.push({ divider: true });
     items.push({ label: '在此前插入列', icon: 'fa-arrow-left', action: function () { pInsertColumn(tableIndex, cellIndex); } });
     items.push({ label: '在此后插入列', icon: 'fa-arrow-right', action: function () { pInsertColumn(tableIndex, cellIndex + 1); } });
-    if (table.columns > 1) {
-        items.push({ label: '删除此列', icon: 'fa-trash', danger: true, action: function () { pDeleteColumn(tableIndex, cellIndex); } });
-    }
+    items.push({ label: '删除此列', iconStack: { base: 'fa-trash', overlay: 'fa-up-down' }, danger: true, action: function () { pDeleteColumn(tableIndex, cellIndex); } });
 
 
     pShowContextMenu(event.clientX, event.clientY, items);
@@ -730,9 +977,21 @@ function pShowContextMenu(x, y, items) {
         }
         var btn = document.createElement('button');
         btn.className = 'planner-context-item' + (item.danger ? ' danger' : '');
-        var icon = document.createElement('i');
-        icon.className = 'fas ' + item.icon;
-        btn.appendChild(icon);
+        if (item.iconStack) {
+            var wrap = document.createElement('span');
+            wrap.className = 'ctx-icon-stack';
+            var baseIcon = document.createElement('i');
+            baseIcon.className = 'fas ' + item.iconStack.base;
+            wrap.appendChild(baseIcon);
+            var ovIcon = document.createElement('i');
+            ovIcon.className = 'fas ' + item.iconStack.overlay + ' ctx-icon-overlay' + (item.iconStack.overlayClass ? ' ' + item.iconStack.overlayClass : '');
+            wrap.appendChild(ovIcon);
+            btn.appendChild(wrap);
+        } else {
+            var icon = document.createElement('i');
+            icon.className = 'fas ' + item.icon;
+            btn.appendChild(icon);
+        }
         var span = document.createElement('span');
         span.textContent = item.label;
         btn.appendChild(span);
@@ -775,6 +1034,11 @@ document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape') {
         if (document.getElementById('planner-confirm-modal').style.display !== 'none') {
             pCloseConfirm();
+            return;
+        }
+        var _tm = document.getElementById('planner-table-menu');
+        if (_tm && _tm.style.display !== 'none') {
+            pCloseTableMenu();
             return;
         }
         pCloseContextMenu();
@@ -923,6 +1187,7 @@ function pLoadSelectedLayout(layoutId) {
                 plannerState = { tables: [pMakeDefaultTable('')] };
             }
             pCurrentLayoutId = layout.id;
+            localStorage.setItem('plannerCurrentLayoutId', String(pCurrentLayoutId));
             document.getElementById('planner-delete-btn').style.display = '';
             document.getElementById('planner-layout-name').value = layout.name;
             pRenderGrid();
@@ -935,6 +1200,7 @@ function pLoadSelectedLayout(layoutId) {
 function pNewLayout() {
     plannerState = { tables: [pMakeDefaultTable('')] };
     pCurrentLayoutId = null;
+    localStorage.removeItem('plannerCurrentLayoutId');
     document.getElementById('planner-delete-btn').style.display = 'none';
     document.getElementById('planner-layout-name').value = '未命名策划';
     pRenderGrid();
@@ -964,9 +1230,25 @@ function pOpenPreview() {
 }
 
 
+function pShowToast(msg, type) {
+    var existing = document.getElementById('planner-toast');
+    if (existing) existing.remove();
+    var toast = document.createElement('div');
+    toast.id = 'planner-toast';
+    toast.className = 'capture-toast capture-toast-' + (type || 'info');
+    toast.innerHTML = '<i class="fas ' + (type === 'success' ? 'fa-check-circle' : type === 'error' ? 'fa-exclamation-circle' : 'fa-info-circle') + '"></i> ' + escapeHtml(msg);
+    document.body.appendChild(toast);
+    requestAnimationFrame(function () { toast.classList.add('show'); });
+    setTimeout(function () {
+        toast.classList.remove('show');
+        setTimeout(function () { toast.remove(); }, 300);
+    }, 2500);
+}
+
+
 function pConfirmSave() {
     var name = document.getElementById('planner-layout-name').value.trim();
-    if (!name) { alert('请输入策划名称'); return; }
+    if (!name) { pShowToast('请输入策划名称', 'error'); return; }
 
 
     var config = JSON.parse(JSON.stringify(plannerState));
@@ -979,7 +1261,11 @@ function pConfirmSave() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ name: name, config: config })
         }).then(r => r.json()).then(function () {
+            localStorage.setItem('plannerCurrentLayoutId', String(pCurrentLayoutId));
             pLoadLayouts();
+            pShowToast('保存成功', 'success');
+        }).catch(function () {
+            pShowToast('保存失败，请重试', 'error');
         });
     } else {
         fetch('/api/planner/layouts', {
@@ -987,9 +1273,13 @@ function pConfirmSave() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ name: name, config: config })
         }).then(r => r.json()).then(function (data) {
-            if (data.error) { alert(data.error); return; }
+            if (data.error) { pShowToast(data.error, 'error'); return; }
             pCurrentLayoutId = data.id;
+            localStorage.setItem('plannerCurrentLayoutId', String(pCurrentLayoutId));
             pLoadLayouts();
+            pShowToast('保存成功', 'success');
+        }).catch(function () {
+            pShowToast('保存失败，请重试', 'error');
         });
     }
 }
@@ -1022,8 +1312,21 @@ function pCloseConfirm() {
 }
 
 
+function pOnInputEnterSave(e) {
+    if (e.key === 'Enter') {
+        e.preventDefault();
+        e.target.blur();
+        pConfirmSave();
+    }
+}
+
+
 document.getElementById('planner-layout-name').addEventListener('keydown', function (e) {
-    if (e.key === 'Enter') pConfirmSave();
+    if (e.key === 'Enter') {
+        e.preventDefault();
+        this.blur();
+        pConfirmSave();
+    }
 });
 
 
@@ -1040,6 +1343,16 @@ window.addEventListener('resize', function () {
     if (pResizeTimer) clearTimeout(pResizeTimer);
     pResizeTimer = setTimeout(function () {
         pRenderGrid();
+        var _tm = document.getElementById('planner-table-menu');
+        if (_tm && _tm.style.display !== 'none') {
+            var wrapper = document.getElementById('planner-table-menu-wrapper');
+            var previewBtn = document.querySelector('.planner-preview-btn');
+            if (wrapper && previewBtn) {
+                var wRect = wrapper.getBoundingClientRect();
+                var pRect = previewBtn.getBoundingClientRect();
+                _tm.style.maxHeight = Math.max(120, pRect.top - wRect.bottom - 8) + 'px';
+            }
+        }
     }, 200);
 });
 
@@ -1049,6 +1362,12 @@ document.addEventListener('dragend', function () {
     if (grid) grid.classList.remove('dragging');
     var zone = document.getElementById('drag-delete-zone');
     if (zone) { zone.style.display = 'none'; zone.classList.remove('drag-over'); }
+    if (_pDragTableIdx !== null) {
+        document.querySelectorAll('.planner-table-menu-item').forEach(function (el) {
+            el.classList.remove('dragging', 'drag-over', 'drag-over-bottom');
+        });
+        _pDragTableIdx = null;
+    }
 });
 
 
@@ -1057,7 +1376,7 @@ document.addEventListener('dragend', function () {
     if (!zone || zone._plannerDeleteInit) return;
     zone._plannerDeleteInit = true;
     zone.addEventListener('dragover', function (e) {
-        if (!pDragData || pDragData.type !== 'move') return;
+        if ((!pDragData || pDragData.type !== 'move') && _pDragTableIdx === null) return;
         e.preventDefault();
         e.dataTransfer.dropEffect = 'move';
         zone.classList.add('drag-over');
@@ -1069,6 +1388,13 @@ document.addEventListener('dragend', function () {
         e.preventDefault();
         e.stopPropagation();
         zone.classList.remove('drag-over');
+        if (_pDragTableIdx !== null) {
+            var tableIdx = _pDragTableIdx;
+            _pDragTableIdx = null;
+            zone.style.display = 'none';
+            pRemoveTable(tableIdx);
+            return;
+        }
         if (!pDragData || pDragData.type !== 'move') return;
         var table = plannerState.tables[pDragData.tableIndex];
         if (table && table.rows[pDragData.rowIndex]) {
@@ -1089,6 +1415,25 @@ document.addEventListener('click', function (e) {
     if (dd && !dd.contains(e.target)) {
         pCloseLayoutMenu();
     }
+    var tm = document.getElementById('planner-table-menu-wrapper');
+    if (tm && !tm.contains(e.target)) {
+        pCloseTableMenu();
+    }
+});
+
+
+window.addEventListener('beforeunload', function () {
+    if (!pCurrentLayoutId) return;
+    var name = document.getElementById('planner-layout-name').value.trim();
+    if (!name) return;
+    var config = JSON.parse(JSON.stringify(plannerState));
+    config = pEnrichAspectRatio(config);
+    fetch('/api/planner/layouts/' + pCurrentLayoutId, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name, config: config }),
+        keepalive: true
+    });
 });
 
 
@@ -1096,5 +1441,11 @@ pLoadDimensions().then(function () {
     pLoadMaterials();
 });
 pRenderGrid();
-pLoadLayouts();
+pLoadLayouts().then(function () {
+    var savedId = localStorage.getItem('plannerCurrentLayoutId');
+    if (savedId) {
+        var id = parseInt(savedId);
+        if (id) pLoadSelectedLayout(id);
+    }
+});
 

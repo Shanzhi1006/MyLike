@@ -118,6 +118,16 @@ def init_db():
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS personal_uploads (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        filename TEXT NOT NULL UNIQUE,
+        original_filename TEXT NOT NULL,
+        type TEXT NOT NULL,
+        file_size INTEGER,
+        batch_id TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL
+    );
     """)
 
     for dim in FIXED_DIMENSIONS:
@@ -134,6 +144,8 @@ def init_db():
     _migrate_sort_order(conn)
     _migrate_source_material_id(conn)
     _migrate_video_offset(conn)
+    _migrate_starred(conn)
+    _migrate_personal_uploads_batch_id(conn)
 
     conn.commit()
 
@@ -159,6 +171,19 @@ def _migrate_video_offset(conn):
         conn.execute("ALTER TABLE materials ADD COLUMN video_offset REAL")
 
 
+def _migrate_starred(conn):
+    cols = [r["name"] for r in conn.execute("PRAGMA table_info(tags)").fetchall()]
+    if "starred" not in cols:
+        conn.execute("ALTER TABLE tags ADD COLUMN starred INTEGER NOT NULL DEFAULT 0")
+
+
+def _migrate_personal_uploads_batch_id(conn):
+    cols = [r["name"] for r in conn.execute("PRAGMA table_info(personal_uploads)").fetchall()]
+    if "batch_id" not in cols:
+        conn.execute("ALTER TABLE personal_uploads ADD COLUMN batch_id TEXT NOT NULL DEFAULT ''")
+        conn.execute("UPDATE personal_uploads SET batch_id = created_at WHERE batch_id = ''")
+
+
 @auto_rollback
 def reorder_dimensions(dim_ids):
     conn = get_conn()
@@ -179,6 +204,18 @@ def reorder_tags(tag_ids):
             (order, tag_id),
         )
     conn.commit()
+
+
+@auto_rollback
+def toggle_tag_star(tag_id):
+    conn = get_conn()
+    conn.execute(
+        "UPDATE tags SET starred = CASE WHEN starred = 1 THEN 0 ELSE 1 END WHERE id=?",
+        (tag_id,),
+    )
+    conn.commit()
+    row = conn.execute("SELECT starred FROM tags WHERE id=?", (tag_id,)).fetchone()
+    return row["starred"] if row else 0
 
 
 @auto_rollback
@@ -655,11 +692,13 @@ def get_all_tags(dimension_id=None):
     conn = get_conn()
     if dimension_id:
         rows = conn.execute(
-            "SELECT * FROM tags WHERE dimension_id=? ORDER BY sort_order, id",
+            "SELECT * FROM tags WHERE dimension_id=? ORDER BY starred DESC, sort_order, id",
             (dimension_id,),
         ).fetchall()
     else:
-        rows = conn.execute("SELECT * FROM tags ORDER BY dimension_id, sort_order, id").fetchall()
+        rows = conn.execute(
+            "SELECT * FROM tags ORDER BY dimension_id, starred DESC, sort_order, id"
+        ).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -850,6 +889,15 @@ def find_work_by_video_id(video_id, platform):
     return row["id"] if row else None
 
 
+def get_work_material_filenames(work_id):
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT filename FROM materials WHERE work_id=?",
+        (work_id,),
+    ).fetchall()
+    return {r["filename"] for r in rows}
+
+
 def get_all_planner_layouts():
     conn = get_conn()
     rows = conn.execute("SELECT * FROM planner_layouts ORDER BY updated_at DESC").fetchall()
@@ -895,4 +943,44 @@ def update_planner_layout(layout_id, name=None, config=None):
 def delete_planner_layout(layout_id):
     conn = get_conn()
     conn.execute("DELETE FROM planner_layouts WHERE id=?", (layout_id,))
+    conn.commit()
+
+
+@auto_rollback
+def insert_personal_upload(filename, original_filename, mtype, file_size=None, batch_id=""):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO personal_uploads (filename, original_filename, type, file_size, batch_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        (filename, original_filename, mtype, file_size, batch_id, datetime.now().isoformat()),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def get_all_personal_uploads():
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT * FROM personal_uploads ORDER BY batch_id DESC, original_filename ASC, id ASC"
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_personal_upload(upload_id):
+    conn = get_conn()
+    row = conn.execute("SELECT * FROM personal_uploads WHERE id=?", (upload_id,)).fetchone()
+    return dict(row) if row else None
+
+
+@auto_rollback
+def delete_personal_upload(upload_id):
+    conn = get_conn()
+    conn.execute("DELETE FROM personal_uploads WHERE id=?", (upload_id,))
+    conn.commit()
+
+
+@auto_rollback
+def delete_personal_uploads(upload_ids):
+    conn = get_conn()
+    conn.executemany("DELETE FROM personal_uploads WHERE id=?", [(uid,) for uid in upload_ids])
     conn.commit()
