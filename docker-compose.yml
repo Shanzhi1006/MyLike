@@ -48,4 +48,4 @@ services:
             - FLASK_DEBUG=0
             - DB_PATH=/app/data/mylike.db
             - MEDIA_PARSER_URL=http://media-parser:8051
-            - MEDIA_PARSER_API_KEY=${MEDIA_PARSER_API_KEY:-mp-VQcBogiubPO8EtWf3rb1hErR}
+            - MEDIA_PARSER_API_KEY=${MEDIA_PARSER_API_KEY:-mp-oeOIDXsu9q4ktbVcgJVnDtum}

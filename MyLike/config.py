@@ -10,7 +10,7 @@ DB_PATH = Path(os.environ.get("DB_PATH", str(BASE_DIR / "mylike.db")))
 
 
 MEDIA_PARSER_URL = os.environ.get("MEDIA_PARSER_URL", "http://127.0.0.1:8051")
-API_KEY = os.environ.get("MEDIA_PARSER_API_KEY", "mp-VQcBogiubPO8EtWf3rb1hErR")
+API_KEY = os.environ.get("MEDIA_PARSER_API_KEY", "mp-oeOIDXsu9q4ktbVcgJVnDtum")
 
 
 FLASK_HOST = os.environ.get("FLASK_HOST", "127.0.0.1")
