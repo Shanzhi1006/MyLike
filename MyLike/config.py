@@ -5,8 +5,8 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent
 
 
-MEDIA_DIR = BASE_DIR / "media"
-DB_PATH = BASE_DIR / "mylike.db"
+MEDIA_DIR = Path(os.environ.get("MEDIA_DIR", str(BASE_DIR / "media")))
+DB_PATH = Path(os.environ.get("DB_PATH", str(BASE_DIR / "mylike.db")))
 
 
 MEDIA_PARSER_URL = os.environ.get("MEDIA_PARSER_URL", "http://127.0.0.1:8051")

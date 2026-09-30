@@ -1,6 +1,40 @@
+# Python
 __pycache__/
-/media/
 *.pyc
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+
+# 数据库
 *.db
 *.db-shm
 *.db-wal
+
+# 环境变量 & 敏感文件
+.env
+.env.local
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# 日志
+*.log
+logs/
+
+# MyLike 运行时数据
+MyLike/data/
+MyLike/media/
+
+# media-parser 整个目录
+media-parser/
+
+# 操作系统
+.DS_Store
+Thumbs.db
+
+# Docker 运行时
+*.pid

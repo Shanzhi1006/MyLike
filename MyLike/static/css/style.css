@@ -247,6 +247,8 @@ body {
 .task-item-status {
     white-space: nowrap;
     font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 
@@ -255,6 +257,13 @@ body {
     align-items: center;
     gap: 8px;
     flex-shrink: 0;
+    max-width: 40%;
+}
+
+.task-item-right .task-item-status {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 

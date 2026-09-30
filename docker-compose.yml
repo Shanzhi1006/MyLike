@@ -1,0 +1,51 @@
+services:
+    media-parser:
+        build: ./media-parser
+        container_name: media-parser
+        restart: always
+        command: gunicorn --preload -w 2 -k gthread -b 0.0.0.0:8051 app:app
+        ports:
+            - "8051:8051"
+        healthcheck:
+            test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8051/api/health')" ]
+            interval: 30s
+            timeout: 5s
+            retries: 3
+            start_period: 10s
+        volumes:
+            - ./media-parser/logs:/app/logs
+            - ./media-parser/data:/app/data
+        environment:
+            - TZ=Asia/Shanghai
+            - SECRET_KEY=${SECRET_KEY:-}
+            - DATABASE_PATH=/app/data/media_parser.db
+            - TRUST_PROXY_HEADERS=${TRUST_PROXY_HEADERS:-false}
+            - XHS_COOKIE=${XHS_COOKIE:-}
+            - DOUYIN_COOKIE=${DOUYIN_COOKIE:-}
+            - DOUBAO_COOKIE=${DOUBAO_COOKIE:-}
+            - YUANBAO_COOKIE=${YUANBAO_COOKIE:-}
+            - PINDUODUO_COOKIE=${PINDUODUO_COOKIE:-}
+            - KUAISHOU_COOKIE=${KUAISHOU_COOKIE:-}
+            - JIMENG_COOKIE=${JIMENG_COOKIE:-}
+            - WEIBO_COOKIE=${WEIBO_COOKIE:-}
+
+    mylike:
+        build: ./MyLike
+        container_name: mylike
+        restart: always
+        ports:
+            - "5000:5000"
+        depends_on:
+            media-parser:
+                condition: service_healthy
+        volumes:
+            - ./MyLike/media:/app/media
+            - ./MyLike/data:/app/data
+        environment:
+            - TZ=Asia/Shanghai
+            - FLASK_HOST=0.0.0.0
+            - FLASK_PORT=5000
+            - FLASK_DEBUG=0
+            - DB_PATH=/app/data/mylike.db
+            - MEDIA_PARSER_URL=http://media-parser:8051
+            - MEDIA_PARSER_API_KEY=${MEDIA_PARSER_API_KEY:-mp-VQcBogiubPO8EtWf3rb1hErR}

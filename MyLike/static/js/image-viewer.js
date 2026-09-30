@@ -83,12 +83,13 @@ function createImageViewer(opts) {
             if (data.error) { alert(data.error); return; }
             var newUrl = data.url;
             var newThumbUrl = data.thumb_url;
+            var newMediumUrl = data.medium_url;
             galleryList[galleryIndex].url = newUrl;
             var overlayImg = document.getElementById(overlayImgId);
             if (overlayImg) overlayImg.src = newUrl;
             var thumbImg = document.getElementById(thumbImgPrefix + item.materialId);
             if (thumbImg) thumbImg.src = newThumbUrl || newUrl;
-            if (opts.onRotate) opts.onRotate(item.materialId, newUrl, newThumbUrl);
+            if (opts.onRotate) opts.onRotate(item.materialId, newUrl, newThumbUrl, newMediumUrl);
         }).catch(function () { rotating = false; });
     }
 

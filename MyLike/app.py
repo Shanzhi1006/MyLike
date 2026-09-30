@@ -29,7 +29,9 @@ def startup():
     sync_database()
 
 
+if not FLASK_DEBUG or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
+    startup()
+
+
 if __name__ == "__main__":
-    if os.environ.get("WERKZEUG_RUN_MAIN") == "true" or not FLASK_DEBUG:
-        startup()
     app.run(host=FLASK_HOST, port=FLASK_PORT, debug=FLASK_DEBUG)

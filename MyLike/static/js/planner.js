@@ -8,12 +8,13 @@ var pViewer = createImageViewer({
     navFn: 'pNavImage',
     rotateFn: 'pRotateImage',
     closeFn: 'pCloseImageOverlay',
-    onRotate: function (materialId, newUrl, newThumbUrl) {
-        pUpdateGridImageUrl(materialId, newUrl, newThumbUrl);
+    onRotate: function (materialId, newUrl, newThumbUrl, newMediumUrl) {
+        pUpdateGridImageUrl(materialId, newUrl, newThumbUrl, newMediumUrl);
         var mat = pAllMaterials.find(function (m) { return m.id === materialId; });
         if (mat) {
             mat.url = newUrl;
             if (newThumbUrl) mat.thumb_url = newThumbUrl;
+            if (newMediumUrl) mat.medium_url = newMediumUrl;
             if (mat.aspectRatio) mat.aspectRatio = 1 / mat.aspectRatio;
         }
     }
@@ -281,7 +282,7 @@ function pRemoveCellImage(tableIndex, rowIndex, cellIndex) {
 }
 
 
-function pUpdateGridImageUrl(materialId, newUrl, newThumbUrl) {
+function pUpdateGridImageUrl(materialId, newUrl, newThumbUrl, newMediumUrl) {
     var needRender = false;
     plannerState.tables.forEach(function (table) {
         table.rows.forEach(function (row) {
@@ -289,6 +290,7 @@ function pUpdateGridImageUrl(materialId, newUrl, newThumbUrl) {
                 if (cell && cell.materialId === materialId) {
                     cell.url = newUrl;
                     if (newThumbUrl) cell.thumbUrl = newThumbUrl;
+                    if (newMediumUrl) cell.mediumUrl = newMediumUrl;
                     if (cell.aspectRatio) cell.aspectRatio = 1 / cell.aspectRatio;
                     needRender = true;
                 }
@@ -457,7 +459,7 @@ function pRenderGrid() {
                     html += 'ondragleave="pOnDragLeaveCell(event, this)" ';
                     html += 'ondrop="pOnDropCell(event,' + tableIndex + ',' + rowIndex + ',' + cellIndex + ')" ';
                     html += 'oncontextmenu="pOnCellContextMenu(event,' + tableIndex + ',' + rowIndex + ',' + cellIndex + ')">';
-                    html += '<img src="' + (cell.thumbUrl || cell.url) + '" draggable="true" ';
+                    html += '<img src="' + (cell.mediumUrl || cell.url) + '" draggable="true" ';
                     html += 'onerror="this.onerror=null;this.src=\'' + cell.url + '\'" ';
                     html += 'ondragstart="pOnDragStartGridImage(event,' + tableIndex + ',' + rowIndex + ',' + cellIndex + ')" ';
                     html += 'onclick="pOpenGridImage(' + tableIndex + ',' + rowIndex + ',' + cellIndex + ')">';

@@ -1,6 +1,7 @@
 import json
 import logging
 import shutil
+import threading
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -202,13 +203,15 @@ def api_rotate_material(material_id):
         else:
             rotated.save(file_path)
 
-        new_url = media_url(mat["media_dir"], mat["filename"]) + "?t=" + str(int(datetime.now().timestamp()))
-        new_thumb_url = thumb_url(mat["media_dir"], mat["filename"]) + "?t=" + str(int(datetime.now().timestamp()))
+        ts_suffix = "?t=" + str(int(datetime.now().timestamp()))
+        new_url = media_url(mat["media_dir"], mat["filename"]) + ts_suffix
+        new_thumb_url = thumb_url(mat["media_dir"], mat["filename"]) + ts_suffix
+        new_medium_url = thumb_url(mat["media_dir"], mat["filename"], "medium") + ts_suffix
 
         for level in ("thumb", "medium"):
             regenerate_thumbnail(file_path, level)
 
-        return jsonify({"success": True, "url": new_url, "thumb_url": new_thumb_url})
+        return jsonify({"success": True, "url": new_url, "thumb_url": new_thumb_url, "medium_url": new_medium_url})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -391,6 +394,7 @@ def api_upload_personal():
     batch_id = datetime.now().isoformat()
 
     results = []
+    thumb_tasks = []
     for file in files:
         if not file or not file.filename:
             continue
@@ -408,8 +412,6 @@ def api_upload_personal():
         file.save(str(file_path))
         file_size = file_path.stat().st_size
 
-        generate_all_thumbnails(file_path)
-
         upload_id = insert_personal_upload(filename, original_filename, mtype, file_size, batch_id)
 
         results.append({
@@ -420,6 +422,19 @@ def api_upload_personal():
             "url": media_url("personal_uploads", filename),
             "thumb_url": thumb_url("personal_uploads", filename) if mtype in ("image", "video") else None,
         })
+
+        thumb_tasks.append(file_path)
+
+    def _generate_thumbnails_async(paths):
+        for p in paths:
+            try:
+                generate_all_thumbnails(p)
+            except Exception as e:
+                logger.warning("Async thumbnail generation failed for %s: %s", p.name, e)
+
+    if thumb_tasks:
+        t = threading.Thread(target=_generate_thumbnails_async, args=(thumb_tasks,), daemon=True)
+        t.start()
 
     return jsonify({"uploads": results})
 

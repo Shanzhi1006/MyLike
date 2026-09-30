@@ -326,7 +326,7 @@ function renderTask(container, task) {
         html += '<span class="task-item-status" style="color:' + color + '">' + label;
         if (item.message) html += ' - ' + escapeHtml(item.message);
         html += '</span>';
-        if (item.status === 'failed') {
+        if (item.status === 'failed' || item.status === 'partial_success') {
             html += '<button class="btn btn-retry" onclick="retryImport(\'' + task.task_id + '\', ' + item.index + ')">重试</button>';
         }
         html += '</div>';
