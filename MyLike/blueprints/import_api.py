@@ -1,42 +1,31 @@
 import logging
 import threading
 import uuid
-from datetime import datetime, timedelta
 
 from flask import Blueprint, jsonify, request
 
 from config import PLATFORM_DISPLAY
-from db import (assign_fixed_tags, find_work_by_media_dir, find_work_by_video_id, get_work_material_filenames,
-                insert_material, insert_work, upsert_author)
+from db import (
+    assign_fixed_tags,
+    cleanup_old_import_tasks,
+    create_import_task,
+    find_work_by_media_dir,
+    find_work_by_video_id,
+    get_import_task,
+    get_all_import_tasks,
+    get_work_material_filenames,
+    insert_material,
+    insert_work,
+    touch_work,
+    update_import_task_item,
+    update_import_task_status,
+    upsert_author,
+)
 from media_parser import parse_and_download
 
 logger = logging.getLogger("mylike.import_api")
 
-
 bp = Blueprint("import_api", __name__, url_prefix="/api/import")
-
-
-import_tasks = {}
-import_tasks_lock = threading.Lock()
-MAX_TASK_AGE_HOURS = 24
-MAX_TASKS = 50
-
-
-def _cleanup_old_tasks():
-    now = datetime.now()
-    to_remove = []
-    for tid, task in import_tasks.items():
-        try:
-            created = datetime.fromisoformat(task["created_at"])
-            if (now - created) > timedelta(hours=MAX_TASK_AGE_HOURS):
-                to_remove.append(tid)
-        except (ValueError, KeyError):
-            to_remove.append(tid)
-    for tid in to_remove:
-        import_tasks.pop(tid, None)
-    while len(import_tasks) > MAX_TASKS:
-        oldest = min(import_tasks.items(), key=lambda x: x[1]["created_at"])
-        import_tasks.pop(oldest[0], None)
 
 
 @bp.route("", methods=["POST"])
@@ -47,6 +36,8 @@ def api_import():
         texts = [texts]
     if not texts:
         return jsonify({"error": "请提供至少一个分享文本"}), 400
+    if len(texts) > 100:
+        return jsonify({"error": "单次最多导入100条链接"}), 400
 
     task_id = str(uuid.uuid4())[:8]
     items = []
@@ -56,21 +47,10 @@ def api_import():
                 "index": i,
                 "text": text,
                 "full_text": text,
-                "status": "pending",
-                "message": "",
-                "work_id": None,
             }
         )
 
-    with import_tasks_lock:
-        import_tasks[task_id] = {
-            "task_id": task_id,
-            "status": "running",
-            "total": len(items),
-            "completed": 0,
-            "items": items,
-            "created_at": datetime.now().isoformat(),
-        }
+    create_import_task(task_id, items)
 
     thread = threading.Thread(target=_run_import, args=(task_id, items), daemon=True)
     thread.start()
@@ -87,32 +67,34 @@ def api_retry():
     if task_id is None or item_index is None:
         return jsonify({"error": "缺少 task_id 或 item_index"}), 400
 
-    with import_tasks_lock:
-        task = import_tasks.get(task_id)
-        if not task:
-            return jsonify({"error": "任务不存在"}), 404
-        item = None
-        for it in task["items"]:
-            if it["index"] == item_index:
-                item = it
-                break
-        if not item:
-            return jsonify({"error": "导入项不存在"}), 404
-        item["status"] = "pending"
-        item["message"] = "等待重试..."
-        task["status"] = "running"
-        task["completed"] = sum(1 for it in task["items"] if it["status"] not in ("pending", "parsing", "downloading"))
+    task = get_import_task(task_id)
+    if not task:
+        return jsonify({"error": "任务不存在"}), 404
 
-    thread = threading.Thread(target=_run_retry, args=(task_id, item), daemon=True)
+    item = None
+    for it in task["items"]:
+        if it["index"] == item_index:
+            item = it
+            break
+    if not item:
+        return jsonify({"error": "导入项不存在"}), 404
+
+    update_import_task_item(task_id, item_index, "pending", message="等待重试...")
+
+    thread = threading.Thread(
+        target=_run_retry,
+        args=(task_id, item_index, item["full_text"]),
+        daemon=True,
+    )
     thread.start()
 
     return jsonify({"task_id": task_id, "item_index": item_index})
 
 
-def _import_single_item(item):
+def _import_single_item(task_id, item_index, full_text):
     try:
-        item["status"] = "parsing"
-        result = parse_and_download(item["full_text"])
+        update_import_task_item(task_id, item_index, "parsing")
+        result = parse_and_download(full_text)
 
         existing_id = None
         if result["video_id"]:
@@ -144,26 +126,39 @@ def _import_single_item(item):
                     material_type_pairs,
                 )
 
+                touch_work(existing_id)
+
                 errors = result["errors"]
                 if errors:
-                    item["status"] = "partial_success"
-                    item["message"] = (
-                        f"增量导入: 新增{len(new_materials)}个素材, "
-                        f"已存在{skipped_count}个素材; " + "; ".join(errors)
+                    update_import_task_item(
+                        task_id, item_index, "partial_success",
+                        message=(
+                            f"增量导入: 新增{len(new_materials)}个素材, "
+                            f"已存在{skipped_count}个素材; " + "; ".join(errors)
+                        ),
+                        work_id=existing_id,
                     )
                 else:
-                    item["status"] = "incremental"
-                    item["message"] = f"增量导入: 新增{len(new_materials)}个素材, 已存在{skipped_count}个素材"
+                    update_import_task_item(
+                        task_id, item_index, "incremental",
+                        message=f"增量导入: 新增{len(new_materials)}个素材, 已存在{skipped_count}个素材",
+                        work_id=existing_id,
+                    )
             else:
                 errors = result["errors"]
                 if errors:
-                    item["status"] = "partial_success"
-                    item["message"] = f"作品已存在，素材已全部导入; " + "; ".join(errors)
+                    update_import_task_item(
+                        task_id, item_index, "partial_success",
+                        message=f"作品已存在，素材已全部导入; " + "; ".join(errors),
+                        work_id=existing_id,
+                    )
                 else:
-                    item["status"] = "exists"
-                    item["message"] = "作品已存在，素材已全部导入"
+                    update_import_task_item(
+                        task_id, item_index, "exists",
+                        message="作品已存在，素材已全部导入",
+                        work_id=existing_id,
+                    )
 
-            item["work_id"] = existing_id
             logger.info(
                 "Incremental import for work %s: %d new, %d existing",
                 existing_id,
@@ -172,7 +167,7 @@ def _import_single_item(item):
             )
             return
 
-        item["status"] = "downloading"
+        update_import_task_item(task_id, item_index, "downloading")
 
         author_info = result["author_info"]
         author_db_id = upsert_author(
@@ -211,61 +206,47 @@ def _import_single_item(item):
             material_type_pairs,
         )
 
-        item["status"] = result["status"]
-        item["message"] = "; ".join(result["errors"]) if result["errors"] else "导入成功"
-        item["work_id"] = work_id
+        message = "; ".join(result["errors"]) if result["errors"] else "导入成功"
+        update_import_task_item(task_id, item_index, result["status"], message=message, work_id=work_id)
         logger.info("Imported work %s: %s", work_id, result["title"])
 
     except Exception as e:
-        item["status"] = "failed"
-        item["message"] = str(e)
-        logger.error("Import failed for item %s: %s", item.get("index"), e, exc_info=True)
+        update_import_task_item(task_id, item_index, "failed", message=str(e))
+        logger.error("Import failed for item %s: %s", item_index, e, exc_info=True)
 
 
 def _run_import(task_id, items):
     for item in items:
-        _import_single_item(item)
-        with import_tasks_lock:
-            task = import_tasks.get(task_id)
-            if task:
-                task["completed"] += 1
-
-    with import_tasks_lock:
-        task = import_tasks.get(task_id)
-        if task:
-            all_done = all(it["status"] not in ("pending", "parsing", "downloading") for it in task["items"])
-            if all_done:
-                task["status"] = "completed"
-        _cleanup_old_tasks()
+        _import_single_item(task_id, item["index"], item["full_text"])
+        update_import_task_status(task_id)
+    cleanup_old_import_tasks()
 
 
-def _run_retry(task_id, item):
-    _import_single_item(item)
-    with import_tasks_lock:
-        task = import_tasks.get(task_id)
-        if task:
-            task["completed"] = sum(
-                1 for it in task["items"] if it["status"] not in ("pending", "parsing", "downloading")
-            )
-            all_done = all(it["status"] not in ("pending", "parsing", "downloading") for it in task["items"])
-            if all_done:
-                task["status"] = "completed"
-        _cleanup_old_tasks()
+def _run_retry(task_id, item_index, full_text):
+    _import_single_item(task_id, item_index, full_text)
+    update_import_task_status(task_id)
+    cleanup_old_import_tasks()
+
+
+NO_CACHE_HEADERS = {"Cache-Control": "no-cache, no-store, must-revalidate"}
 
 
 @bp.route("/status")
 def api_import_status_all():
-    with import_tasks_lock:
-        _cleanup_old_tasks()
-        tasks = list(import_tasks.values())
-    tasks.sort(key=lambda t: t["created_at"], reverse=True)
-    return jsonify({"tasks": tasks})
+    cleanup_old_import_tasks()
+    tasks = get_all_import_tasks()
+    resp = jsonify({"tasks": tasks})
+    resp.headers.update(NO_CACHE_HEADERS)
+    return resp
 
 
 @bp.route("/status/<task_id>")
 def api_import_status(task_id):
-    with import_tasks_lock:
-        task = import_tasks.get(task_id)
+    task = get_import_task(task_id)
     if not task:
-        return jsonify({"error": "任务不存在"}), 404
-    return jsonify(task)
+        resp = jsonify({"error": "任务不存在"})
+        resp.headers.update(NO_CACHE_HEADERS)
+        return resp, 404
+    resp = jsonify(task)
+    resp.headers.update(NO_CACHE_HEADERS)
+    return resp

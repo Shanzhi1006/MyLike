@@ -1,6 +1,10 @@
 services:
     media-parser:
-        build: ./media-parser
+        build:
+            context: ./media-parser
+            args:
+                APT_MIRROR: ${APT_MIRROR:-mirrors.aliyun.com}
+                PIP_MIRROR: ${PIP_MIRROR:-mirrors.aliyun.com/pypi/simple}
         container_name: media-parser
         restart: always
         command: gunicorn --preload -w 2 -k gthread -b 0.0.0.0:8051 app:app
@@ -18,7 +22,6 @@ services:
         environment:
             - TZ=Asia/Shanghai
             - SECRET_KEY=${SECRET_KEY:-}
-            - DATABASE_PATH=/app/data/media_parser.db
             - TRUST_PROXY_HEADERS=${TRUST_PROXY_HEADERS:-false}
             - XHS_COOKIE=${XHS_COOKIE:-}
             - DOUYIN_COOKIE=${DOUYIN_COOKIE:-}
@@ -30,7 +33,11 @@ services:
             - WEIBO_COOKIE=${WEIBO_COOKIE:-}
 
     mylike:
-        build: ./MyLike
+        build:
+            context: ./mylike
+            args:
+                APT_MIRROR: ${APT_MIRROR:-mirrors.aliyun.com}
+                PIP_MIRROR: ${PIP_MIRROR:-mirrors.aliyun.com/pypi/simple}
         container_name: mylike
         restart: always
         ports:
@@ -39,13 +46,12 @@ services:
             media-parser:
                 condition: service_healthy
         volumes:
-            - ./MyLike/media:/app/media
-            - ./MyLike/data:/app/data
+            - ./mylike/media:/app/media
+            - ./mylike/data:/app/data
         environment:
             - TZ=Asia/Shanghai
             - FLASK_HOST=0.0.0.0
             - FLASK_PORT=5000
             - FLASK_DEBUG=0
-            - DB_PATH=/app/data/mylike.db
             - MEDIA_PARSER_URL=http://media-parser:8051
-            - MEDIA_PARSER_API_KEY=${MEDIA_PARSER_API_KEY:-mp-oeOIDXsu9q4ktbVcgJVnDtum}
+            - MEDIA_PARSER_API_KEY=${MEDIA_PARSER_API_KEY:-}

@@ -26,8 +26,8 @@ env/
 logs/
 
 # MyLike 运行时数据
-MyLike/data/
-MyLike/media/
+mylike/data/
+mylike/media/
 
 # media-parser 整个目录
 media-parser/

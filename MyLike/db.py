@@ -4,7 +4,8 @@ import logging
 import shutil
 import sqlite3
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
+from pathlib import Path
 
 from config import DB_PATH, FIXED_DIMENSIONS, MEDIA_DIR
 
@@ -37,6 +38,7 @@ def auto_rollback(func):
 
 
 def init_db():
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = get_conn()
     cur = conn.cursor()
 
@@ -62,7 +64,8 @@ def init_db():
         status TEXT NOT NULL DEFAULT 'success',
         error_message TEXT,
         created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
+        updated_at TEXT NOT NULL,
+        sort_order INTEGER NOT NULL DEFAULT 0
     );
 
 
@@ -74,7 +77,8 @@ def init_db():
         original_url TEXT,
         sort_order INTEGER NOT NULL DEFAULT 0,
         source_material_id INTEGER REFERENCES materials(id) ON DELETE SET NULL,
-        created_at TEXT NOT NULL
+        created_at TEXT NOT NULL,
+        video_offset REAL
     );
 
 
@@ -92,6 +96,7 @@ def init_db():
         dimension_id INTEGER NOT NULL REFERENCES tag_dimensions(id) ON DELETE CASCADE,
         name TEXT NOT NULL,
         sort_order INTEGER NOT NULL DEFAULT 0,
+        starred INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL,
         UNIQUE(dimension_id, name)
     );
@@ -128,7 +133,39 @@ def init_db():
         batch_id TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS import_tasks (
+        task_id TEXT PRIMARY KEY,
+        status TEXT NOT NULL DEFAULT 'running',
+        total INTEGER NOT NULL,
+        completed INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS import_task_items (
+        task_id TEXT NOT NULL REFERENCES import_tasks(task_id) ON DELETE CASCADE,
+        item_index INTEGER NOT NULL,
+        text TEXT NOT NULL,
+        full_text TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        message TEXT NOT NULL DEFAULT '',
+        work_id INTEGER,
+        PRIMARY KEY (task_id, item_index)
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_works_media_dir ON works(media_dir);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_works_video_platform ON works(video_id, platform) WHERE video_id IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_materials_work_filename ON materials(work_id, filename);
     """)
+
+    try:
+        cur.execute("SELECT sort_order FROM works LIMIT 1")
+    except sqlite3.OperationalError:
+        cur.execute("ALTER TABLE works ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")
+        rows = cur.execute("SELECT id FROM works ORDER BY created_at DESC, id DESC").fetchall()
+        for idx, row in enumerate(rows):
+            cur.execute("UPDATE works SET sort_order=? WHERE id=?", (idx, row["id"]))
+        conn.commit()
 
     for dim in FIXED_DIMENSIONS:
         existing = cur.execute("SELECT id FROM tag_dimensions WHERE name = ?", (dim["name"],)).fetchone()
@@ -141,47 +178,7 @@ def init_db():
                 (dim["name"], dim["type"], max_order + 1, datetime.now().isoformat()),
             )
 
-    _migrate_sort_order(conn)
-    _migrate_source_material_id(conn)
-    _migrate_video_offset(conn)
-    _migrate_starred(conn)
-    _migrate_personal_uploads_batch_id(conn)
-
     conn.commit()
-
-
-def _migrate_sort_order(conn):
-    for table in ("tag_dimensions", "tags"):
-        cols = [r["name"] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
-        if "sort_order" not in cols:
-            conn.execute(f"ALTER TABLE {table} ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")
-
-
-def _migrate_source_material_id(conn):
-    cols = [r["name"] for r in conn.execute("PRAGMA table_info(materials)").fetchall()]
-    if "source_material_id" not in cols:
-        conn.execute(
-            "ALTER TABLE materials ADD COLUMN source_material_id INTEGER REFERENCES materials(id) ON DELETE SET NULL"
-        )
-
-
-def _migrate_video_offset(conn):
-    cols = [r["name"] for r in conn.execute("PRAGMA table_info(materials)").fetchall()]
-    if "video_offset" not in cols:
-        conn.execute("ALTER TABLE materials ADD COLUMN video_offset REAL")
-
-
-def _migrate_starred(conn):
-    cols = [r["name"] for r in conn.execute("PRAGMA table_info(tags)").fetchall()]
-    if "starred" not in cols:
-        conn.execute("ALTER TABLE tags ADD COLUMN starred INTEGER NOT NULL DEFAULT 0")
-
-
-def _migrate_personal_uploads_batch_id(conn):
-    cols = [r["name"] for r in conn.execute("PRAGMA table_info(personal_uploads)").fetchall()]
-    if "batch_id" not in cols:
-        conn.execute("ALTER TABLE personal_uploads ADD COLUMN batch_id TEXT NOT NULL DEFAULT ''")
-        conn.execute("UPDATE personal_uploads SET batch_id = created_at WHERE batch_id = ''")
 
 
 @auto_rollback
@@ -230,6 +227,9 @@ def reset_db():
         DROP TABLE IF EXISTS materials;
         DROP TABLE IF EXISTS works;
         DROP TABLE IF EXISTS authors;
+        DROP TABLE IF EXISTS personal_uploads;
+        DROP TABLE IF EXISTS import_task_items;
+        DROP TABLE IF EXISTS import_tasks;
     """)
     conn.commit()
     init_db()
@@ -263,12 +263,39 @@ def insert_work(
     conn = get_conn()
     now = datetime.now().isoformat()
     cur = conn.cursor()
+
+    existing_id = None
+    if video_id:
+        row = cur.execute(
+            "SELECT id FROM works WHERE video_id=? AND platform=?",
+            (video_id, platform),
+        ).fetchone()
+        if row:
+            existing_id = row["id"]
+    if not existing_id:
+        row = cur.execute("SELECT id FROM works WHERE media_dir=?", (media_dir,)).fetchone()
+        if row:
+            existing_id = row["id"]
+
+    if existing_id:
+        cur.execute(
+            """UPDATE works SET title=?, author_id=?, original_url=?,
+               video_id=COALESCE(?, video_id), status=?, error_message=?, updated_at=?
+               WHERE id=?""",
+            (title, author_id, original_url, video_id, status, error_message, now, existing_id),
+        )
+        conn.commit()
+        return existing_id
+
+    max_order_row = cur.execute("SELECT COALESCE(MAX(sort_order), -1) AS max_order FROM works").fetchone()
+    new_sort_order = max_order_row["max_order"] + 1
+
     cur.execute(
         """INSERT INTO works
            (title, platform, author_id, original_url, media_dir, video_id,
-            status, error_message, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (title, platform, author_id, original_url, media_dir, video_id, status, error_message, now, now),
+            status, error_message, created_at, updated_at, sort_order)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (title, platform, author_id, original_url, media_dir, video_id, status, error_message, now, now, new_sort_order),
     )
     conn.commit()
     return cur.lastrowid
@@ -280,6 +307,17 @@ def insert_material(
 ):
     conn = get_conn()
     cur = conn.cursor()
+
+    row = cur.execute(
+        "SELECT id FROM materials WHERE work_id=? AND filename=?",
+        (work_id, filename),
+    ).fetchone()
+    if row:
+        if video_offset is not None:
+            cur.execute("UPDATE materials SET video_offset=? WHERE id=?", (video_offset, row["id"]))
+            conn.commit()
+        return row["id"]
+
     cur.execute(
         """INSERT INTO materials
            (work_id, type, filename, original_url, sort_order, source_material_id, created_at, video_offset)
@@ -432,10 +470,9 @@ def get_material_effective_tags(material_id):
            FROM (
                SELECT tag_id FROM material_tags WHERE material_id = ?
                UNION
-               SELECT wt.tag_id FROM material_tags mt
-               JOIN materials m ON mt.material_id = m.id
+               SELECT wt.tag_id FROM materials m
                JOIN work_tags wt ON wt.work_id = m.work_id
-               WHERE mt.material_id = ?
+               WHERE m.id = ?
            ) all_tags
            JOIN tags t ON all_tags.tag_id = t.id
            JOIN tag_dimensions d ON t.dimension_id = d.id
@@ -479,7 +516,7 @@ def get_all_works(tag_filter=None, sort_order="desc", page=1, per_page=20):
     count_sql = f"SELECT COUNT(*) as total FROM ({base_sql})"
     total = conn.execute(count_sql, params).fetchone()["total"]
 
-    sql = base_sql + " ORDER BY w.created_at " + ("DESC" if sort_order != "asc" else "ASC")
+    sql = base_sql + " ORDER BY w.sort_order " + ("DESC" if sort_order != "asc" else "ASC") + ", w.id DESC"
     if per_page > 0:
         offset = (page - 1) * per_page
         sql += f" LIMIT {per_page} OFFSET {offset}"
@@ -562,7 +599,7 @@ def get_all_materials(tag_filter=None, sort_order="desc", page=1, per_page=20):
     count_sql = f"SELECT COUNT(*) as total FROM ({base_sql})"
     total = conn.execute(count_sql, params).fetchone()["total"]
 
-    sql = base_sql + " ORDER BY w.created_at " + ("DESC" if sort_order != "asc" else "ASC") + ", m.sort_order"
+    sql = base_sql + " ORDER BY w.sort_order " + ("DESC" if sort_order != "asc" else "ASC") + ", w.id DESC, m.sort_order"
     if per_page > 0:
         offset = (page - 1) * per_page
         sql += f" LIMIT {per_page} OFFSET {offset}"
@@ -646,29 +683,166 @@ def get_work_materials(work_id):
 def delete_work(work_id):
     conn = get_conn()
     work = conn.execute("SELECT media_dir FROM works WHERE id=?", (work_id,)).fetchone()
-    if work:
-        full_path = MEDIA_DIR / work["media_dir"]
-        if full_path.exists() and full_path.is_dir():
-            safe_base = MEDIA_DIR.resolve()
-            if full_path.resolve().is_relative_to(safe_base):
-                shutil.rmtree(str(full_path))
+    if not work:
+        return
+    media_dir = work["media_dir"]
     conn.execute("DELETE FROM works WHERE id=?", (work_id,))
     conn.commit()
+    full_path = MEDIA_DIR / media_dir
+    if full_path.exists() and full_path.is_dir():
+        safe_base = MEDIA_DIR.resolve()
+        if full_path.resolve().is_relative_to(safe_base):
+            shutil.rmtree(str(full_path))
 
 
 @auto_rollback
 def delete_material(material_id):
     conn = get_conn()
     mat = conn.execute("SELECT filename, work_id FROM materials WHERE id=?", (material_id,)).fetchone()
-    if mat:
-        work = conn.execute("SELECT media_dir FROM works WHERE id=?", (mat["work_id"],)).fetchone()
-        if work:
-            file_path = MEDIA_DIR / work["media_dir"] / mat["filename"]
-            safe_base = MEDIA_DIR.resolve()
-            if file_path.resolve().is_relative_to(safe_base) and file_path.exists():
-                file_path.unlink()
+    if not mat:
+        return
+    filename = mat["filename"]
+    work = conn.execute("SELECT media_dir FROM works WHERE id=?", (mat["work_id"],)).fetchone()
     conn.execute("DELETE FROM materials WHERE id=?", (material_id,))
     conn.commit()
+    if work:
+        file_path = MEDIA_DIR / work["media_dir"] / filename
+        safe_base = MEDIA_DIR.resolve()
+        if file_path.resolve().is_relative_to(safe_base) and file_path.exists():
+            file_path.unlink()
+
+
+@auto_rollback
+def reorder_works(work_ids):
+    conn = get_conn()
+    for idx, wid in enumerate(work_ids):
+        conn.execute("UPDATE works SET sort_order=? WHERE id=?", (idx, wid))
+    conn.commit()
+
+
+@auto_rollback
+def move_work(work_id, target_work_id, insert_after):
+    conn = get_conn()
+    cur = conn.cursor()
+
+    src = cur.execute("SELECT sort_order FROM works WHERE id=?", (work_id,)).fetchone()
+    tgt = cur.execute("SELECT sort_order FROM works WHERE id=?", (target_work_id,)).fetchone()
+    if not src or not tgt:
+        raise ValueError("作品不存在")
+    if work_id == target_work_id:
+        return
+
+    old_order = src["sort_order"]
+    target_order = tgt["sort_order"]
+
+    cur.execute("UPDATE works SET sort_order = sort_order - 1 WHERE sort_order > ?", (old_order,))
+    if target_order > old_order:
+        target_order -= 1
+
+    if insert_after:
+        new_order = target_order + 1
+    else:
+        new_order = target_order
+
+    cur.execute(
+        "UPDATE works SET sort_order = sort_order + 1 WHERE sort_order >= ? AND id != ?",
+        (new_order, work_id),
+    )
+    cur.execute("UPDATE works SET sort_order = ? WHERE id = ?", (new_order, work_id))
+    conn.commit()
+
+
+@auto_rollback
+def move_material(material_id, target_work_id, target_sort_order=None):
+    conn = get_conn()
+    cur = conn.cursor()
+
+    mat = cur.execute(
+        "SELECT work_id, filename, type FROM materials WHERE id=?", (material_id,)
+    ).fetchone()
+    if not mat:
+        raise ValueError("素材不存在")
+    source_work_id = mat["work_id"]
+    if source_work_id == target_work_id:
+        raise ValueError("素材已在目标作品中")
+
+    source_work = cur.execute(
+        "SELECT media_dir FROM works WHERE id=?", (source_work_id,)
+    ).fetchone()
+    target_work = cur.execute(
+        "SELECT media_dir FROM works WHERE id=?", (target_work_id,)
+    ).fetchone()
+    if not source_work or not target_work:
+        raise ValueError("作品不存在")
+
+    filename = mat["filename"]
+    source_dir = MEDIA_DIR / source_work["media_dir"]
+    target_dir = MEDIA_DIR / target_work["media_dir"]
+    safe_base = MEDIA_DIR.resolve()
+
+    new_filename = filename
+    if (target_dir / filename).exists():
+        stem = Path(filename).stem
+        ext = Path(filename).suffix
+        counter = 1
+        while (target_dir / f"{stem}_{counter}{ext}").exists():
+            counter += 1
+        new_filename = f"{stem}_{counter}{ext}"
+
+    source_path = source_dir / filename
+    target_path = target_dir / new_filename
+    if source_path.exists():
+        if not source_path.resolve().is_relative_to(safe_base):
+            raise ValueError("源路径非法")
+        if not target_path.resolve().is_relative_to(safe_base):
+            raise ValueError("目标路径非法")
+        target_dir.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(source_path), str(target_path))
+
+    source_thumb_dir = source_dir / ".thumbs"
+    target_thumb_dir = target_dir / ".thumbs"
+    old_stem = Path(filename).stem
+    new_stem = Path(new_filename).stem
+    for level in ("thumb", "medium"):
+        old_thumb = source_thumb_dir / f"{old_stem}.{level}.jpg"
+        new_thumb = target_thumb_dir / f"{new_stem}.{level}.jpg"
+        if old_thumb.exists():
+            target_thumb_dir.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(old_thumb), str(new_thumb))
+
+    if target_sort_order is not None:
+        cur.execute(
+            "UPDATE materials SET sort_order = sort_order + 1 "
+            "WHERE work_id=? AND sort_order >= ?",
+            (target_work_id, target_sort_order),
+        )
+        new_sort_order = target_sort_order
+    else:
+        max_order_row = cur.execute(
+            "SELECT COALESCE(MAX(sort_order), -1) as max_order FROM materials WHERE work_id=?",
+            (target_work_id,),
+        ).fetchone()
+        new_sort_order = max_order_row["max_order"] + 1
+
+    cur.execute(
+        "UPDATE materials SET work_id=?, filename=?, sort_order=? WHERE id=?",
+        (target_work_id, new_filename, new_sort_order, material_id),
+    )
+
+    source_mats = cur.execute(
+        "SELECT id FROM materials WHERE work_id=? ORDER BY sort_order, id",
+        (source_work_id,),
+    ).fetchall()
+    for idx, row in enumerate(source_mats):
+        cur.execute("UPDATE materials SET sort_order=? WHERE id=?", (idx, row["id"]))
+
+    conn.commit()
+
+    return {
+        "new_filename": new_filename,
+        "source_work_id": source_work_id,
+        "target_work_id": target_work_id,
+    }
 
 
 @auto_rollback
@@ -679,6 +853,13 @@ def reorder_materials(work_id, material_ids):
             "UPDATE materials SET sort_order=? WHERE id=? AND work_id=?",
             (idx, mid, work_id),
         )
+    conn.commit()
+
+
+@auto_rollback
+def touch_work(work_id):
+    conn = get_conn()
+    conn.execute("UPDATE works SET updated_at=? WHERE id=?", (datetime.now().isoformat(), work_id))
     conn.commit()
 
 
@@ -983,4 +1164,135 @@ def delete_personal_upload(upload_id):
 def delete_personal_uploads(upload_ids):
     conn = get_conn()
     conn.executemany("DELETE FROM personal_uploads WHERE id=?", [(uid,) for uid in upload_ids])
+    conn.commit()
+
+
+@auto_rollback
+def create_import_task(task_id, items):
+    conn = get_conn()
+    now = datetime.now().isoformat()
+    conn.execute(
+        "INSERT INTO import_tasks (task_id, status, total, completed, created_at) VALUES (?, 'running', ?, 0, ?)",
+        (task_id, len(items), now),
+    )
+    conn.executemany(
+        "INSERT INTO import_task_items (task_id, item_index, text, full_text, status, message, work_id) "
+        "VALUES (?, ?, ?, ?, 'pending', '', NULL)",
+        [(task_id, item["index"], item["text"], item["full_text"]) for item in items],
+    )
+    conn.commit()
+
+
+def get_import_task(task_id):
+    conn = get_conn()
+    task_row = conn.execute("SELECT * FROM import_tasks WHERE task_id=?", (task_id,)).fetchone()
+    if not task_row:
+        return None
+    task = dict(task_row)
+    item_rows = conn.execute(
+        "SELECT * FROM import_task_items WHERE task_id=? ORDER BY item_index",
+        (task_id,),
+    ).fetchall()
+    task["items"] = [_import_item_to_dict(r) for r in item_rows]
+    return task
+
+
+def get_all_import_tasks():
+    conn = get_conn()
+    task_rows = conn.execute("SELECT * FROM import_tasks ORDER BY created_at DESC").fetchall()
+    if not task_rows:
+        return []
+    task_ids = [r["task_id"] for r in task_rows]
+    ph = ",".join("?" * len(task_ids))
+    item_rows = conn.execute(
+        f"SELECT * FROM import_task_items WHERE task_id IN ({ph}) ORDER BY task_id, item_index",
+        task_ids,
+    ).fetchall()
+    items_by_task = {}
+    for r in item_rows:
+        items_by_task.setdefault(r["task_id"], []).append(_import_item_to_dict(r))
+    tasks = []
+    for r in task_rows:
+        t = dict(r)
+        t["items"] = items_by_task.get(r["task_id"], [])
+        tasks.append(t)
+    return tasks
+
+
+def _import_item_to_dict(row):
+    d = dict(row)
+    d["index"] = d.pop("item_index")
+    return d
+
+
+@auto_rollback
+def update_import_task_item(task_id, item_index, status, message=None, work_id=None):
+    conn = get_conn()
+    conn.execute(
+        "UPDATE import_task_items SET status=? WHERE task_id=? AND item_index=?",
+        (status, task_id, item_index),
+    )
+    if message is not None:
+        conn.execute(
+            "UPDATE import_task_items SET message=? WHERE task_id=? AND item_index=?",
+            (message, task_id, item_index),
+        )
+    if work_id is not None:
+        conn.execute(
+            "UPDATE import_task_items SET work_id=? WHERE task_id=? AND item_index=?",
+            (work_id, task_id, item_index),
+        )
+    conn.commit()
+
+
+@auto_rollback
+def update_import_task_status(task_id):
+    conn = get_conn()
+    completed_row = conn.execute(
+        "SELECT COUNT(*) as cnt FROM import_task_items "
+        "WHERE task_id=? AND status NOT IN ('pending', 'parsing', 'downloading')",
+        (task_id,),
+    ).fetchone()
+    completed = completed_row["cnt"] if completed_row else 0
+
+    pending_row = conn.execute(
+        "SELECT COUNT(*) as cnt FROM import_task_items "
+        "WHERE task_id=? AND status IN ('pending', 'parsing', 'downloading')",
+        (task_id,),
+    ).fetchone()
+    all_done = (pending_row["cnt"] == 0) if pending_row else True
+
+    status = "completed" if all_done else "running"
+    conn.execute(
+        "UPDATE import_tasks SET completed=?, status=? WHERE task_id=?",
+        (completed, status, task_id),
+    )
+    conn.commit()
+
+
+@auto_rollback
+def cleanup_old_import_tasks(max_age_hours=24, max_tasks=50):
+    conn = get_conn()
+    now = datetime.now()
+    rows = conn.execute("SELECT task_id, created_at FROM import_tasks").fetchall()
+    for r in rows:
+        try:
+            created = datetime.fromisoformat(r["created_at"])
+            if (now - created) > timedelta(hours=max_age_hours):
+                conn.execute("DELETE FROM import_task_items WHERE task_id=?", (r["task_id"],))
+                conn.execute("DELETE FROM import_tasks WHERE task_id=?", (r["task_id"],))
+        except (ValueError, KeyError):
+            conn.execute("DELETE FROM import_task_items WHERE task_id=?", (r["task_id"],))
+            conn.execute("DELETE FROM import_tasks WHERE task_id=?", (r["task_id"],))
+
+    count_row = conn.execute("SELECT COUNT(*) as cnt FROM import_tasks").fetchone()
+    count = count_row["cnt"] if count_row else 0
+    if count > max_tasks:
+        excess = conn.execute(
+            "SELECT task_id FROM import_tasks ORDER BY created_at ASC LIMIT ?",
+            (count - max_tasks,),
+        ).fetchall()
+        for r in excess:
+            conn.execute("DELETE FROM import_task_items WHERE task_id=?", (r["task_id"],))
+            conn.execute("DELETE FROM import_tasks WHERE task_id=?", (r["task_id"],))
     conn.commit()

@@ -6,11 +6,11 @@ BASE_DIR = Path(__file__).resolve().parent
 
 
 MEDIA_DIR = Path(os.environ.get("MEDIA_DIR", str(BASE_DIR / "media")))
-DB_PATH = Path(os.environ.get("DB_PATH", str(BASE_DIR / "mylike.db")))
+DB_PATH = Path(os.environ.get("DB_PATH", str(BASE_DIR / "data" / "mylike.db")))
 
 
 MEDIA_PARSER_URL = os.environ.get("MEDIA_PARSER_URL", "http://127.0.0.1:8051")
-API_KEY = os.environ.get("MEDIA_PARSER_API_KEY", "mp-oeOIDXsu9q4ktbVcgJVnDtum")
+API_KEY = os.environ.get("MEDIA_PARSER_API_KEY", "")
 
 
 FLASK_HOST = os.environ.get("FLASK_HOST", "127.0.0.1")

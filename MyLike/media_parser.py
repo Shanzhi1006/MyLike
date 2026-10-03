@@ -70,7 +70,15 @@ def parse_and_download(share_text):
     title = data.get("title") or data.get("desc") or "untitled"
     safe_title = sanitize_filename(title)
 
-    work_dir = MEDIA_DIR / safe_title
+    video_id = data.get("video_id")
+    video_id_str = str(video_id) if video_id else None
+
+    if video_id_str:
+        work_dir_name = f"{safe_title}_{video_id_str}"
+    else:
+        work_dir_name = safe_title
+
+    work_dir = MEDIA_DIR / work_dir_name
     work_dir.mkdir(parents=True, exist_ok=True)
 
     referer = PLATFORM_REFERER.get(normalized_platform, "https://www.douyin.com/")
@@ -167,8 +175,6 @@ def parse_and_download(share_text):
         "avatar_url": author.get("avatar"),
     }
 
-    video_id = data.get("video_id")
-
     if not materials:
         status = "failed"
     elif errors:
@@ -182,8 +188,8 @@ def parse_and_download(share_text):
         "platform": normalized_platform,
         "author_info": author_info,
         "original_url": share_url,
-        "media_dir": safe_title,
-        "video_id": str(video_id) if video_id else None,
+        "media_dir": work_dir_name,
+        "video_id": video_id_str,
         "materials": materials,
         "errors": errors,
         "status": status,

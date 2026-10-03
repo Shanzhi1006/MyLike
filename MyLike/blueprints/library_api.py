@@ -14,8 +14,9 @@ from db import (add_material_tag, add_work_tag, assign_fixed_tags, batch_add_mat
                 delete_material, delete_personal_upload, delete_personal_uploads, delete_work,
                 get_all_materials, get_all_personal_uploads, get_all_works, get_captures, get_conn,
                 get_material_effective_tags, get_personal_upload, get_type_tag_ids, get_work_tags,
-                insert_material, insert_personal_upload, insert_work, remove_material_tag, remove_work_tag,
-                reorder_materials, sync_material_tags, sync_work_tags, upsert_author)
+                insert_material, insert_personal_upload, insert_work, move_material, move_work,
+                remove_material_tag, remove_work_tag, reorder_materials, reorder_works,
+                sync_material_tags, sync_work_tags, upsert_author)
 from helpers import media_url, parse_tag_filter, thumb_url
 from thumbnails import generate_all_thumbnails, regenerate_thumbnail
 
@@ -380,6 +381,50 @@ def api_reorder_materials(work_id):
         return jsonify({"error": "material_ids 不能为空"}), 400
     reorder_materials(work_id, material_ids)
     return jsonify({"success": True})
+
+
+@bp.route("/works/reorder", methods=["POST"])
+def api_reorder_works():
+    body = request.get_json(force=True)
+    work_ids = body.get("work_ids", [])
+    if not work_ids:
+        return jsonify({"error": "work_ids 不能为空"}), 400
+    reorder_works(work_ids)
+    return jsonify({"success": True})
+
+
+@bp.route("/works/<int:work_id>/move", methods=["POST"])
+def api_move_work(work_id):
+    body = request.get_json(force=True)
+    target_work_id = body.get("target_work_id")
+    insert_after = body.get("insert_after", False)
+    if target_work_id is None:
+        return jsonify({"error": "缺少 target_work_id"}), 400
+    try:
+        move_work(work_id, int(target_work_id), bool(insert_after))
+        return jsonify({"success": True})
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        logger.error("Move work %s failed: %s", work_id, e, exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@bp.route("/materials/<int:material_id>/move", methods=["POST"])
+def api_move_material(material_id):
+    body = request.get_json(force=True)
+    target_work_id = body.get("target_work_id")
+    target_sort_order = body.get("target_sort_order")
+    if target_work_id is None:
+        return jsonify({"error": "缺少 target_work_id"}), 400
+    try:
+        result = move_material(material_id, int(target_work_id), target_sort_order)
+        return jsonify({"success": True, **result})
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        logger.error("Move material %s to work %s failed: %s", material_id, target_work_id, e, exc_info=True)
+        return jsonify({"error": str(e)}), 500
 
 
 @bp.route("/personal-uploads/upload", methods=["POST"])

@@ -115,9 +115,14 @@ function createFilterBar(opts) {
         if (idx >= 0) activeFilters[dimId].splice(idx, 1);
         else activeFilters[dimId].push(tagId);
         if (activeFilters[dimId].length === 0) delete activeFilters[dimId];
+
+        var oldMenu = document.getElementById(prefix + 'dd-menu-' + dimId);
+        var savedScrollTop = oldMenu ? oldMenu.scrollTop : 0;
+
         render();
+
         var menu = document.getElementById(prefix + 'dd-menu-' + dimId);
-        if (menu) { menu.style.display = ''; openDropdownId = dimId; }
+        if (menu) { menu.style.display = ''; menu.scrollTop = savedScrollTop; openDropdownId = dimId; }
         onChange();
     }
 
@@ -138,7 +143,8 @@ function createFilterBar(opts) {
             });
         }
         if (chips.length > 0) {
-            bar.innerHTML = chips.join('');
+            bar.innerHTML = '<div class="filter-chips-list">' + chips.join('') + '</div>'
+                + '<button class="btn btn-sm btn-secondary filter-clear-btn" onclick="' + fnPrefix + 'ClearFilters()">清除筛选</button>';
             bar.style.display = '';
         } else {
             bar.style.display = 'none';
@@ -169,6 +175,9 @@ function createFilterBar(opts) {
 
     document.addEventListener('click', function (e) {
         if (openDropdownId !== null) {
+            if (!e.target || !e.target.isConnected) {
+                return;
+            }
             var wrapper = document.getElementById(prefix + 'dd-' + openDropdownId);
             if (wrapper && !wrapper.contains(e.target)) {
                 closeAllDropdowns();

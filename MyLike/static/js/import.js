@@ -5,6 +5,9 @@ var blockList = document.getElementById('import-block-list');
 var importInput = document.getElementById('import-input');
 var emptyHint = document.getElementById('import-block-empty');
 
+var pollTimers = {};
+var historyLoaded = false;
+
 
 function addImportItem(text) {
     text = text.trim();
@@ -232,7 +235,7 @@ importInput.addEventListener('keydown', function (e) {
 
 importInput.addEventListener('paste', function (e) {
     var pastedText = (e.clipboardData || window.clipboardData).getData('text');
-    if (pastedText && pastedText.includes('\n')) {
+    if (pastedText && pastedText.trim()) {
         e.preventDefault();
         var existingText = this.value.trim();
         if (existingText) {
@@ -287,14 +290,28 @@ function pollImportStatus(taskId) {
         container.prepend(taskDiv);
     }
 
+    if (pollTimers[taskId]) {
+        clearTimeout(pollTimers[taskId]);
+    }
+
     function update() {
-        fetch('/api/import/status/' + taskId)
-            .then(function (r) { return r.json(); })
+        fetch('/api/import/status/' + taskId + '?_t=' + Date.now())
+            .then(function (r) {
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                return r.json();
+            })
             .then(function (task) {
+                if (task.error) throw new Error(task.error);
                 renderTask(taskDiv, task);
                 if (task.status === 'running') {
-                    setTimeout(update, 1000);
+                    pollTimers[taskId] = setTimeout(update, 1000);
+                } else {
+                    delete pollTimers[taskId];
                 }
+            })
+            .catch(function (e) {
+                console.error('Poll import status failed for task ' + taskId + ':', e);
+                pollTimers[taskId] = setTimeout(update, 3000);
             });
     }
     update();
@@ -376,27 +393,56 @@ function retryImport(taskId, itemIndex) {
 
 
 function loadImportHistory() {
-    fetch('/api/import/status')
-        .then(function (r) { return r.json(); })
+    var container = document.getElementById('import-tasks');
+    if (!container) return;
+
+    container.innerHTML = '<div class="import-loading" style="padding:18px;color:#999;text-align:center;">加载历史记录中...</div>';
+
+    fetch('/api/import/status?_t=' + Date.now())
+        .then(function (r) {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.json();
+        })
         .then(function (data) {
-            var container = document.getElementById('import-tasks');
-            if (data.tasks && data.tasks.length > 0) {
-                data.tasks.forEach(function (task) {
-                    var taskDiv = document.getElementById('task-' + task.task_id);
-                    if (!taskDiv) {
-                        taskDiv = document.createElement('div');
-                        taskDiv.id = 'task-' + task.task_id;
-                        taskDiv.className = 'import-task';
-                        container.appendChild(taskDiv);
-                    }
-                    renderTask(taskDiv, task);
-                    if (task.status === 'running') {
-                        pollImportStatus(task.task_id);
-                    }
-                });
-            }
+            container.innerHTML = '';
+            historyLoaded = true;
+            if (!data.tasks || data.tasks.length === 0) return;
+
+            data.tasks.forEach(function (task) {
+                var taskDiv = document.getElementById('task-' + task.task_id);
+                if (!taskDiv) {
+                    taskDiv = document.createElement('div');
+                    taskDiv.id = 'task-' + task.task_id;
+                    taskDiv.className = 'import-task';
+                    container.appendChild(taskDiv);
+                }
+                renderTask(taskDiv, task);
+                if (task.status === 'running') {
+                    pollImportStatus(task.task_id);
+                }
+            });
+        })
+        .catch(function (e) {
+            console.error('Load import history failed:', e);
+            container.innerHTML = '<div class="import-error" style="padding:18px;color:#f44336;text-align:center;">历史记录加载失败: ' + escapeHtml(String(e)) + '</div>';
         });
 }
+
+
+function stopAllPolls() {
+    Object.keys(pollTimers).forEach(function (taskId) {
+        clearTimeout(pollTimers[taskId]);
+        delete pollTimers[taskId];
+    });
+}
+
+
+window.addEventListener('pageshow', function (event) {
+    if (event.persisted) {
+        stopAllPolls();
+        loadImportHistory();
+    }
+});
 
 
 renderImportItems();

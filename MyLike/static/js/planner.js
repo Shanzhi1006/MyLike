@@ -99,6 +99,13 @@ function pLoadDimensions() {
         pFilterBar.setDimensions(dims);
     }).catch(function (err) {
         console.error('加载维度失败:', err);
+        if (!pLoadDimensions._retried) {
+            pLoadDimensions._retried = true;
+            setTimeout(function () {
+                pLoadDimensions._retried = false;
+                pLoadDimensions();
+            }, 1000);
+        }
     });
 }
 
@@ -269,7 +276,7 @@ function pFetchAspectRatio(url, callback) {
 }
 
 
-function pRemoveCellImage(tableIndex, rowIndex, cellIndex) {
+function pRemoveCellImage(event, tableIndex, rowIndex, cellIndex) {
     event.stopPropagation();
     var table = plannerState.tables[tableIndex];
     if (table && table.rows[rowIndex]) {
@@ -463,7 +470,7 @@ function pRenderGrid() {
                     html += 'onerror="this.onerror=null;this.src=\'' + cell.url + '\'" ';
                     html += 'ondragstart="pOnDragStartGridImage(event,' + tableIndex + ',' + rowIndex + ',' + cellIndex + ')" ';
                     html += 'onclick="pOpenGridImage(' + tableIndex + ',' + rowIndex + ',' + cellIndex + ')">';
-                    html += '<button class="planner-cell-remove" onclick="pRemoveCellImage(' + tableIndex + ',' + rowIndex + ',' + cellIndex + ')">&times;</button>';
+                    html += '<button class="planner-cell-remove" onclick="pRemoveCellImage(event,' + tableIndex + ',' + rowIndex + ',' + cellIndex + ')">&times;</button>';
                     html += '</div>';
                 } else {
                     html += '<div class="planner-cell" ';

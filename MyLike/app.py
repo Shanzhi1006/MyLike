@@ -7,6 +7,7 @@ from db import init_db
 from rebuilder import sync_database
 
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = 512 * 1024 * 1024
 
 
 from blueprints.import_api import bp as import_api_bp

@@ -500,11 +500,6 @@ body {
 }
 
 
-.planner-left .filter-clear-btn {
-    margin-left: auto;
-}
-
-
 .filter-dropdown {
     position: relative;
 }
@@ -656,10 +651,22 @@ body {
 
 .filter-chips-bar {
     display: flex;
+    align-items: center;
     gap: 7px;
     flex-wrap: wrap;
     margin-bottom: 14px;
     padding: 0 5px;
+}
+
+.filter-chips-list {
+    display: flex;
+    gap: 7px;
+    flex-wrap: wrap;
+}
+
+.filter-chips-bar .filter-clear-btn {
+    margin-left: auto;
+    flex-shrink: 0;
 }
 
 
@@ -715,6 +722,18 @@ body {
 .work-row.selected {
     border-color: var(--primary);
     background: #fff5f6;
+}
+
+.work-row.dragging {
+    opacity: 0.4;
+}
+
+.work-row.drag-over-top {
+    box-shadow: 0 -3px 0 0 var(--primary);
+}
+
+.work-row.drag-over-bottom {
+    box-shadow: 0 3px 0 0 var(--primary);
 }
 
 

@@ -6,15 +6,19 @@ from config import IMAGE_EXTS, MEDIA_DIR, PLATFORM_DISPLAY, PLATFORM_NORMALIZE, 
 from db import (
     add_material_tag,
     assign_fixed_tags,
+    delete_personal_upload,
     get_conn,
     get_type_tag_ids,
     insert_material,
+    insert_personal_upload,
     insert_work,
     reset_db,
     upsert_author,
 )
 
 logger = logging.getLogger("mylike.rebuilder")
+
+PERSONAL_UPLOADS_DIR = "personal_uploads"
 
 
 def _scan_media_files(work_dir):
@@ -35,21 +39,7 @@ def _scan_media_files(work_dir):
 
 
 def _get_original_url(data):
-    original_url = data.get("original_url") or data.get("share_url") or ""
-    if original_url:
-        return original_url
-
-    video_id = data.get("video_id")
-    if not video_id:
-        return ""
-
-    raw_platform = data.get("platform", "")
-    platform = PLATFORM_NORMALIZE.get(raw_platform, "")
-    if platform == "douyin":
-        return f"https://www.douyin.com/video/{video_id}"
-    if platform == "xiaohongshu":
-        return f"https://www.xiaohongshu.com/explore/{video_id}"
-    return ""
+    return data.get("original_url", "")
 
 
 def _create_work_from_dir(work_dir, data):
@@ -128,6 +118,44 @@ def _sync_work_materials(work_id, work_dir):
     conn.commit()
 
 
+def _sync_personal_uploads():
+    """同步 personal_uploads 目录：文件新增则入库，文件缺失则清记录。"""
+    upload_dir = MEDIA_DIR / PERSONAL_UPLOADS_DIR
+    if not upload_dir.exists():
+        return {"added": 0, "removed": 0}
+
+    conn = get_conn()
+    db_uploads = {}
+    for row in conn.execute("SELECT id, filename FROM personal_uploads").fetchall():
+        db_uploads[row["filename"]] = row["id"]
+
+    actual_files = set()
+    added = 0
+    for entry in sorted(upload_dir.iterdir()):
+        if not entry.is_file():
+            continue
+        if entry.name.startswith("."):
+            continue
+        ext = entry.suffix.lower()
+        if ext not in IMAGE_EXTS and ext not in VIDEO_EXTS:
+            continue
+        actual_files.add(entry.name)
+        if entry.name not in db_uploads:
+            mtype = "image" if ext in IMAGE_EXTS else "video"
+            file_size = entry.stat().st_size
+            insert_personal_upload(entry.name, entry.name, mtype, file_size)
+            added += 1
+
+    removed = 0
+    for filename, upload_id in db_uploads.items():
+        if filename not in actual_files:
+            delete_personal_upload(upload_id)
+            removed += 1
+
+    logger.info("Personal uploads sync: %d added, %d removed", added, removed)
+    return {"added": added, "removed": removed}
+
+
 def sync_database():
     if not MEDIA_DIR.exists():
         return {"added": 0, "removed": 0, "updated": 0, "errors": []}
@@ -145,6 +173,8 @@ def sync_database():
     for entry in sorted(MEDIA_DIR.iterdir()):
         if not entry.is_dir():
             continue
+        if entry.name == PERSONAL_UPLOADS_DIR:
+            continue
         meta_path = entry / "metadata.json"
         if not meta_path.exists():
             continue
@@ -158,12 +188,6 @@ def sync_database():
             if entry.name in db_works:
                 work_id = db_works[entry.name]
                 _sync_work_materials(work_id, entry)
-                original_url = _get_original_url(data)
-                if original_url:
-                    conn.execute(
-                        "UPDATE works SET original_url=? WHERE id=? AND (original_url IS NULL OR original_url='')",
-                        (original_url, work_id),
-                    )
                 updated += 1
             else:
                 _create_work_from_dir(entry, data)
@@ -179,21 +203,34 @@ def sync_database():
             removed += 1
     conn.commit()
 
-    logger.info("Sync complete: %d added, %d updated, %d removed, %d errors", added, updated, removed, len(errors))
-    return {"added": added, "removed": removed, "updated": updated, "errors": errors}
+    upload_result = _sync_personal_uploads()
+
+    logger.info(
+        "Sync complete: %d added, %d updated, %d removed, %d errors, uploads: %d added, %d removed",
+        added, updated, removed, len(errors), upload_result["added"], upload_result["removed"],
+    )
+    return {
+        "added": added,
+        "removed": removed,
+        "updated": updated,
+        "errors": errors,
+        "personal_uploads": upload_result,
+    }
 
 
 def rebuild_database():
     reset_db()
 
     if not MEDIA_DIR.exists():
-        return {"rebuilt": 0, "errors": []}
+        return {"rebuilt": 0, "errors": [], "personal_uploads": {"rebuilt": 0}}
 
     count = 0
     errors = []
 
     for entry in sorted(MEDIA_DIR.iterdir()):
         if not entry.is_dir():
+            continue
+        if entry.name == PERSONAL_UPLOADS_DIR:
             continue
         meta_path = entry / "metadata.json"
         if not meta_path.exists():
@@ -208,5 +245,14 @@ def rebuild_database():
             errors.append(f"{entry.name}: {str(e)}")
             logger.error("Rebuild error for %s: %s", entry.name, e, exc_info=True)
 
-    logger.info("Rebuild complete: %d works, %d errors", count, len(errors))
-    return {"rebuilt": count, "errors": errors}
+    upload_result = _sync_personal_uploads()
+
+    logger.info(
+        "Rebuild complete: %d works, %d errors, uploads: %d added",
+        count, len(errors), upload_result["added"],
+    )
+    return {
+        "rebuilt": count,
+        "errors": errors,
+        "personal_uploads": {"rebuilt": upload_result["added"]},
+    }

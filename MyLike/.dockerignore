@@ -1,3 +1,4 @@
+# Python
 __pycache__
 *.pyc
 *.pyo
@@ -5,17 +6,33 @@ __pycache__
 .Python
 env/
 venv/
+.pytest_cache/
+
+# 敏感文件
 .env
-.idea/
-.vscode/
-.git/
-.gitignore
-*.log
+.env.example
+
+# 数据库 & 运行时数据
 *.db
 *.db-shm
 *.db-wal
+data/
 media/
 downloads/
-.DS_Store
-.pytest_cache/
+*.log
+
+# 版本控制 & IDE
+.git/
+.gitignore
+.idea/
+.vscode/
+
+# 构建文件
+Dockerfile
+.dockerignore
+
+# 文档
 docs/
+
+# 操作系统
+.DS_Store

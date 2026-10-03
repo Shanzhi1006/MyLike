@@ -1,5 +1,5 @@
 var currentTab = localStorage.getItem('library-tab') || 'works';
-var sortOrder = 'desc';
+var sortOrder = localStorage.getItem('library-sortOrder') || 'desc';
 var tagPickerCallback = null;
 var tagPickerSelected = [];
 var tagPickerDisabled = new Set();
@@ -7,10 +7,31 @@ var pickerCreateMode = null;
 var pickerCreateDimId = null;
 
 
+var _savedPagination = {};
+try { _savedPagination = JSON.parse(localStorage.getItem('library-pagination') || '{}'); } catch (e) {}
+
 var pagination = {
-    works: { page: 1, pageSize: 20, total: 0 },
-    materials: { page: 1, pageSize: 10, total: 0, cols: 0 }
+    works: {
+        page: (_savedPagination.works && _savedPagination.works.page) || 1,
+        pageSize: (_savedPagination.works && _savedPagination.works.pageSize) || 20,
+        total: 0
+    },
+    materials: {
+        page: (_savedPagination.materials && _savedPagination.materials.page) || 1,
+        pageSize: (_savedPagination.materials && _savedPagination.materials.pageSize) || 10,
+        total: 0,
+        cols: 0
+    }
 };
+
+
+function savePagination() {
+    var toSave = {
+        works: { page: pagination.works.page, pageSize: pagination.works.pageSize },
+        materials: { page: pagination.materials.page, pageSize: pagination.materials.pageSize }
+    };
+    localStorage.setItem('library-pagination', JSON.stringify(toSave));
+}
 
 
 var WORKS_PAGE_SIZES = [20, 40, 60, 100];
@@ -33,7 +54,7 @@ function closeImageOverlay() { viewer.close(); }
 
 
 var filterBar = createFilterBar({
-    onChange: function () { pagination[currentTab].page = 1; loadData(); },
+    onChange: function () { pagination[currentTab].page = 1; savePagination(); loadData(); },
     onStarToggle: function (tagId, starred) {
         loadDimensions().then(function () {
             var dims = filterBar.getDimensions();
@@ -49,6 +70,7 @@ function FilterDropdownSearch(dimId, query) { filterBar.filterDropdownSearch(dim
 function ToggleFilter(dimId, tagId) { filterBar.toggleFilter(dimId, tagId); }
 function RemoveFilter(dimId, tagId) { filterBar.removeFilter(dimId, tagId); }
 function ToggleTagStar(tagId) { filterBar.toggleTagStar(tagId); }
+function ClearFilters() { filterBar.clearFilters(); }
 function clearFilters() { filterBar.clearFilters(); }
 
 
@@ -70,13 +92,18 @@ function switchTab(tab) {
     } else {
         updatePageSizeSelector();
         pagination[tab].page = 1;
+        savePagination();
         loadData();
+        if (filterBar.getDimensions().length === 0) {
+            loadDimensions();
+        }
     }
 }
 
 
 function toggleSortOrder() {
     sortOrder = sortOrder === 'desc' ? 'asc' : 'desc';
+    localStorage.setItem('library-sortOrder', sortOrder);
     var icon = document.getElementById('sort-order-icon');
     var label = document.getElementById('sort-order-label');
     if (sortOrder === 'desc') {
@@ -87,6 +114,7 @@ function toggleSortOrder() {
         label.textContent = '正序';
     }
     pagination[currentTab].page = 1;
+    savePagination();
     loadData();
 }
 
@@ -146,6 +174,7 @@ function onPageSizeChange(val) {
         pagination.materials.pageSize = val;
     }
     pagination[currentTab].page = 1;
+    savePagination();
     closeAllFilterDropdowns();
     updatePageSizeSelector();
     loadData();
@@ -178,6 +207,13 @@ function loadDimensions() {
         filterBar.setDimensions(dims);
     }).catch(function (err) {
         console.error('加载维度失败:', err);
+        if (!loadDimensions._retried) {
+            loadDimensions._retried = true;
+            setTimeout(function () {
+                loadDimensions._retried = false;
+                loadDimensions();
+            }, 1000);
+        }
     });
 }
 
@@ -217,6 +253,47 @@ function loadData() {
 }
 
 
+function loadDataPreserveScroll() {
+    var savedScrollY = window.scrollY;
+
+    if (currentTab === 'works') {
+        var params = [];
+        var activeFilters = filterBar.getActiveFilters();
+        if (Object.keys(activeFilters).length > 0) params.push('tag_filter=' + encodeURIComponent(JSON.stringify(activeFilters)));
+        params.push('sort_order=' + sortOrder);
+        var p = pagination[currentTab];
+        params.push('page=' + p.page);
+        params.push('per_page=' + p.pageSize);
+        var qs = '?' + params.join('&');
+        fetch('/api/works' + qs).then(r => r.json()).then(data => {
+            pagination.works.total = data.total || 0;
+            renderWorks(data.works || []);
+            renderPagination('works');
+            window.scrollTo(0, savedScrollY);
+        }).catch(function (err) {
+            console.error('加载作品失败:', err);
+        });
+    } else {
+        var params2 = [];
+        var activeFilters2 = filterBar.getActiveFilters();
+        if (Object.keys(activeFilters2).length > 0) params2.push('tag_filter=' + encodeURIComponent(JSON.stringify(activeFilters2)));
+        params2.push('sort_order=' + sortOrder);
+        var p2 = pagination[currentTab];
+        params2.push('page=' + p2.page);
+        params2.push('per_page=' + getMaterialsPerPage());
+        var qs2 = '?' + params2.join('&');
+        fetch('/api/materials' + qs2).then(r => r.json()).then(data => {
+            pagination.materials.total = data.total || 0;
+            renderMaterials(data.materials || []);
+            renderPagination('materials');
+            window.scrollTo(0, savedScrollY);
+        }).catch(function (err) {
+            console.error('加载素材失败:', err);
+        });
+    }
+}
+
+
 function renderWorks(works) {
     const container = document.getElementById('works-view');
     if (works.length === 0) {
@@ -226,7 +303,7 @@ function renderWorks(works) {
     var galleryList = [];
     let html = '';
     works.forEach(w => {
-        html += '<div class="work-row" data-id="' + w.id + '">';
+        html += '<div class="work-row" draggable="true" data-id="' + w.id + '">';
         html += '<button class="row-delete-btn" onclick="confirmDeleteWork(' + w.id + ',\'' + escapeHtml(w.title).replace(/'/g, "\\'") + '\')"><i class="fas fa-times"></i></button>';
         html += '<div class="work-info">';
         if (w.original_url) {
@@ -268,6 +345,7 @@ function renderWorks(works) {
     addSelection();
     updateWorkMaterialsScroll();
     initMaterialDragDrop();
+    initWorkDragDrop();
 }
 
 
@@ -279,6 +357,7 @@ function updateWorkMaterialsScroll() {
 
 
 var _dragSrcThumb = null;
+var _dragSrcWorkId = null;
 
 
 function _clearThumbDragOver() {
@@ -305,10 +384,11 @@ function initDragDeleteZone() {
     if (!zone || zone._dragDeleteInit) return;
     zone._dragDeleteInit = true;
     zone.addEventListener('dragover', function (e) {
-        if (!_dragSrcThumb && !_dragSrcMaterialThumb) return;
+        if (!_dragSrcThumb && !_dragSrcMaterialThumb && !_dragSrcWorkRow) return;
         e.preventDefault();
         e.dataTransfer.dropEffect = 'move';
         _clearThumbDragOver();
+        _clearWorkDragOver();
         zone.classList.add('drag-over');
     });
     zone.addEventListener('dragleave', function (e) {
@@ -328,6 +408,12 @@ function initDragDeleteZone() {
             _dragSrcMaterialThumb = null;
             _hideDragDeleteZone();
             confirmDeleteMaterial(mid);
+        } else if (_dragSrcWorkRow) {
+            var workId = parseInt(_dragSrcWorkRow.dataset.id);
+            var title = _dragSrcWorkRow.querySelector('.work-title') ? _dragSrcWorkRow.querySelector('.work-title').textContent.trim() : '';
+            _dragSrcWorkRow = null;
+            _hideDragDeleteZone();
+            confirmDeleteWork(workId, title);
         }
     });
 }
@@ -339,6 +425,7 @@ function initMaterialDragDrop() {
         thumbs.forEach(thumb => {
             thumb.addEventListener('dragstart', function (e) {
                 _dragSrcThumb = this;
+                _dragSrcWorkId = this.closest('.work-materials').dataset.workId;
                 this.classList.add('dragging');
                 e.dataTransfer.effectAllowed = 'move';
                 e.dataTransfer.setData('text/plain', this.dataset.materialId);
@@ -350,6 +437,7 @@ function initMaterialDragDrop() {
             thumb.addEventListener('dragend', function (e) {
                 this.classList.remove('dragging');
                 _dragSrcThumb = null;
+                _dragSrcWorkId = null;
                 _clearThumbDragOver();
                 _hideDragDeleteZone();
             });
@@ -370,9 +458,17 @@ function initMaterialDragDrop() {
                 e.stopPropagation();
                 this.classList.remove('drag-over', 'drag-over-right');
                 if (!_dragSrcThumb || _dragSrcThumb === this) return;
-                if (_dragSrcThumb.parentNode !== container) return;
+                var containerWorkId = container.dataset.workId;
                 var rect = this.getBoundingClientRect();
                 var insertAfter = (e.clientX - rect.left) > rect.width / 2;
+                if (_dragSrcWorkId !== containerWorkId) {
+                    var materialId = parseInt(_dragSrcThumb.dataset.materialId);
+                    var targetThumbs = Array.from(container.querySelectorAll('.thumb'));
+                    var targetIndex = targetThumbs.indexOf(this);
+                    if (insertAfter) targetIndex++;
+                    moveMaterialToWork(materialId, containerWorkId, targetIndex);
+                    return;
+                }
                 if (insertAfter) {
                     container.insertBefore(_dragSrcThumb, this.nextSibling);
                 } else {
@@ -382,46 +478,204 @@ function initMaterialDragDrop() {
             });
         });
         container.addEventListener('dragover', function (e) {
-            if (!_dragSrcThumb || _dragSrcThumb.parentNode !== container) return;
+            if (!_dragSrcThumb) return;
             var target = e.target.closest('.thumb');
             if (target) return;
             e.preventDefault();
             e.dataTransfer.dropEffect = 'move';
             _clearThumbDragOver();
-            var firstThumb = container.querySelector('.thumb:first-child');
-            var lastThumb = container.querySelector('.thumb:last-child');
-            if (!firstThumb || !lastThumb) return;
-            if (_dragSrcThumb === firstThumb && _dragSrcThumb === lastThumb) return;
-            var firstRect = firstThumb.getBoundingClientRect();
-            var lastRect = lastThumb.getBoundingClientRect();
-            if (e.clientX < firstRect.left + firstRect.width / 2 && _dragSrcThumb !== firstThumb) {
-                firstThumb.classList.add('drag-over');
-            } else if (e.clientX > lastRect.left + lastRect.width / 2 && _dragSrcThumb !== lastThumb) {
-                lastThumb.classList.add('drag-over-right');
+
+            var allThumbs = Array.from(container.querySelectorAll('.thumb'));
+            if (allThumbs.length === 0) return;
+
+            var insertIndex = allThumbs.length;
+            for (var i = 0; i < allThumbs.length; i++) {
+                var r = allThumbs[i].getBoundingClientRect();
+                if (e.clientX < r.left + r.width / 2) {
+                    insertIndex = i;
+                    break;
+                }
+            }
+
+            if (_dragSrcThumb.parentNode === container) {
+                var srcIndex = allThumbs.indexOf(_dragSrcThumb);
+                if (insertIndex === srcIndex || insertIndex === srcIndex + 1) return;
+            }
+
+            if (insertIndex === 0) {
+                allThumbs[0].classList.add('drag-over');
+            } else {
+                allThumbs[insertIndex - 1].classList.add('drag-over-right');
             }
         });
         container.addEventListener('drop', function (e) {
-            if (!_dragSrcThumb || _dragSrcThumb.parentNode !== container) return;
+            if (!_dragSrcThumb) return;
             var target = e.target.closest('.thumb');
             if (target) return;
             e.preventDefault();
             e.stopPropagation();
             _clearThumbDragOver();
-            var firstThumb = container.querySelector('.thumb:first-child');
-            var lastThumb = container.querySelector('.thumb:last-child');
-            if (!firstThumb || !lastThumb) return;
-            var firstRect = firstThumb.getBoundingClientRect();
-            var lastRect = lastThumb.getBoundingClientRect();
-            if (e.clientX < firstRect.left + firstRect.width / 2 && _dragSrcThumb !== firstThumb) {
-                container.insertBefore(_dragSrcThumb, firstThumb);
-                saveMaterialOrder(container);
-            } else if (e.clientX > lastRect.left + lastRect.width / 2 && _dragSrcThumb !== lastThumb) {
-                container.insertBefore(_dragSrcThumb, lastThumb.nextSibling);
+
+            var allThumbs = Array.from(container.querySelectorAll('.thumb'));
+            var containerWorkId = container.dataset.workId;
+            var isCrossWork = _dragSrcWorkId !== containerWorkId;
+
+            if (allThumbs.length === 0) {
+                if (isCrossWork) {
+                    moveMaterialToWork(parseInt(_dragSrcThumb.dataset.materialId), containerWorkId, 0);
+                }
+                return;
+            }
+
+            var insertIndex = allThumbs.length;
+            for (var i = 0; i < allThumbs.length; i++) {
+                var r = allThumbs[i].getBoundingClientRect();
+                if (e.clientX < r.left + r.width / 2) {
+                    insertIndex = i;
+                    break;
+                }
+            }
+
+            if (isCrossWork) {
+                moveMaterialToWork(parseInt(_dragSrcThumb.dataset.materialId), containerWorkId, insertIndex);
+            } else {
+                var srcIndex = allThumbs.indexOf(_dragSrcThumb);
+                if (insertIndex === srcIndex || insertIndex === srcIndex + 1) return;
+                if (insertIndex >= allThumbs.length) {
+                    container.appendChild(_dragSrcThumb);
+                } else {
+                    container.insertBefore(_dragSrcThumb, allThumbs[insertIndex]);
+                }
                 saveMaterialOrder(container);
             }
         });
     });
     initDragDeleteZone();
+}
+
+
+var _dragSrcWorkRow = null;
+
+
+function _clearWorkDragOver() {
+    document.querySelectorAll('.work-row.drag-over-top, .work-row.drag-over-bottom').forEach(el => {
+        el.classList.remove('drag-over-top', 'drag-over-bottom');
+    });
+}
+
+
+function initWorkDragDrop() {
+    var container = document.getElementById('works-view');
+    if (!container) return;
+
+    document.querySelectorAll('.work-row').forEach(row => {
+        row.addEventListener('dragstart', function (e) {
+            if (_dragSrcThumb || _dragSrcMaterialThumb) return;
+            _dragSrcWorkRow = this;
+            this.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', 'work:' + this.dataset.id);
+            clearSelection();
+            _showDragDeleteZone();
+        });
+        row.addEventListener('dragend', function (e) {
+            this.classList.remove('dragging');
+            _dragSrcWorkRow = null;
+            _clearWorkDragOver();
+            _hideDragDeleteZone();
+        });
+        row.addEventListener('dragover', function (e) {
+            if (!_dragSrcWorkRow || this === _dragSrcWorkRow) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            _clearWorkDragOver();
+            var rect = this.getBoundingClientRect();
+            var insertAfter = (e.clientY - rect.top) > rect.height / 2;
+            this.classList.add(insertAfter ? 'drag-over-bottom' : 'drag-over-top');
+        });
+        row.addEventListener('dragleave', function (e) {
+            this.classList.remove('drag-over-top', 'drag-over-bottom');
+        });
+        row.addEventListener('drop', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            this.classList.remove('drag-over-top', 'drag-over-bottom');
+            if (!_dragSrcWorkRow || _dragSrcWorkRow === this) return;
+            var rect = this.getBoundingClientRect();
+            var insertAfter = (e.clientY - rect.top) > rect.height / 2;
+            var workId = parseInt(_dragSrcWorkRow.dataset.id);
+            var targetId = parseInt(this.dataset.id);
+            moveWork(workId, targetId, insertAfter);
+        });
+    });
+
+    container.addEventListener('dragover', function (e) {
+        if (!_dragSrcWorkRow) return;
+        var target = e.target.closest('.work-row');
+        if (target) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        _clearWorkDragOver();
+        var allRows = Array.from(container.querySelectorAll('.work-row'));
+        if (allRows.length === 0) return;
+        var insertIndex = allRows.length;
+        for (var i = 0; i < allRows.length; i++) {
+            var r = allRows[i].getBoundingClientRect();
+            if (e.clientY < r.top + r.height / 2) {
+                insertIndex = i;
+                break;
+            }
+        }
+        var srcIndex = allRows.indexOf(_dragSrcWorkRow);
+        if (insertIndex === srcIndex || insertIndex === srcIndex + 1) return;
+        if (insertIndex === 0) {
+            allRows[0].classList.add('drag-over-top');
+        } else {
+            allRows[insertIndex - 1].classList.add('drag-over-bottom');
+        }
+    });
+    container.addEventListener('drop', function (e) {
+        if (!_dragSrcWorkRow) return;
+        var target = e.target.closest('.work-row');
+        if (target) return;
+        e.preventDefault();
+        e.stopPropagation();
+        _clearWorkDragOver();
+        var allRows = Array.from(container.querySelectorAll('.work-row'));
+        var insertIndex = allRows.length;
+        for (var i = 0; i < allRows.length; i++) {
+            var r = allRows[i].getBoundingClientRect();
+            if (e.clientY < r.top + r.height / 2) {
+                insertIndex = i;
+                break;
+            }
+        }
+        var srcIndex = allRows.indexOf(_dragSrcWorkRow);
+        if (insertIndex === srcIndex || insertIndex === srcIndex + 1) return;
+        var workId = parseInt(_dragSrcWorkRow.dataset.id);
+        if (insertIndex === 0) {
+            moveWork(workId, parseInt(allRows[0].dataset.id), false);
+        } else {
+            moveWork(workId, parseInt(allRows[insertIndex - 1].dataset.id), true);
+        }
+    });
+}
+
+
+function moveWork(workId, targetWorkId, insertAfter) {
+    fetch('/api/works/' + workId + '/move', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target_work_id: targetWorkId, insert_after: insertAfter })
+    }).then(r => r.json()).then(data => {
+        if (data.error) {
+            showToast(data.error, 'error');
+            return;
+        }
+        loadDataPreserveScroll();
+    }).catch(function () {
+        showToast('作品排序保存失败', 'error');
+    });
 }
 
 
@@ -461,6 +715,28 @@ function saveMaterialOrder(container) {
         if (data.error) showToast(data.error, 'error');
     }).catch(function () {
         showToast('排序保存失败', 'error');
+    });
+}
+
+
+function moveMaterialToWork(materialId, targetWorkId, targetSortOrder) {
+    var payload = { target_work_id: parseInt(targetWorkId) };
+    if (targetSortOrder !== undefined && targetSortOrder !== null) {
+        payload.target_sort_order = targetSortOrder;
+    }
+    fetch('/api/materials/' + materialId + '/move', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    }).then(r => r.json()).then(data => {
+        if (data.error) {
+            showToast(data.error, 'error');
+            return;
+        }
+        showToast('素材已移动');
+        loadDataPreserveScroll();
+    }).catch(function () {
+        showToast('移动素材失败', 'error');
     });
 }
 
@@ -577,6 +853,7 @@ function goToPage(page) {
     page = Math.max(1, Math.min(totalPages, page));
     if (page === p.page) return;
     p.page = page;
+    savePagination();
     loadData();
     window.scrollTo({ top: 0, behavior: 'smooth' });
 }
@@ -768,7 +1045,7 @@ function confirmPickerCreate() {
 
 function confirmDeleteWork(id, title) {
     showConfirm('删除作品', '确定要删除作品「' + title + '」及其所有素材吗？此操作不可恢复。', function () {
-        fetch('/api/works/' + id, { method: 'DELETE' }).then(r => r.json()).then(() => loadData());
+        fetch('/api/works/' + id, { method: 'DELETE' }).then(r => r.json()).then(() => loadDataPreserveScroll());
     });
 }
 
@@ -831,7 +1108,7 @@ function editWorkTitle(workId, titleEl) {
 
 function confirmDeleteMaterial(id) {
     showConfirm('删除素材', '确定要删除这个素材吗？此操作不可恢复。', function () {
-        fetch('/api/materials/' + id, { method: 'DELETE' }).then(r => r.json()).then(() => loadData());
+        fetch('/api/materials/' + id, { method: 'DELETE' }).then(r => r.json()).then(() => loadDataPreserveScroll());
     });
 }
 
@@ -847,7 +1124,7 @@ function confirmBatchDelete() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ [key]: ids })
-        }).then(r => r.json()).then(() => { clearSelection(); loadData(); });
+        }).then(r => r.json()).then(() => { clearSelection(); loadDataPreserveScroll(); });
     });
 }
 
@@ -1215,6 +1492,7 @@ window.addEventListener('resize', function () {
             var newCols = detectMaterialColumns();
             if (newCols !== pagination.materials.cols) {
                 pagination.materials.page = 1;
+                savePagination();
                 loadData();
             }
         }
@@ -1230,6 +1508,13 @@ document.getElementById('works-pagination').style.display = currentTab === 'work
 document.getElementById('materials-pagination').style.display = currentTab === 'materials' ? '' : 'none';
 var _initFilterBar = document.querySelector('.filter-bar');
 if (_initFilterBar) _initFilterBar.style.display = currentTab === 'uploads' ? 'none' : '';
+
+if (sortOrder === 'asc') {
+    var _sortIcon = document.getElementById('sort-order-icon');
+    var _sortLabel = document.getElementById('sort-order-label');
+    if (_sortIcon) _sortIcon.innerHTML = '<i class="fas fa-arrow-up-wide-short"></i>';
+    if (_sortLabel) _sortLabel.textContent = '正序';
+}
 
 if (currentTab === 'uploads') {
     loadPersonalUploads();
@@ -1321,9 +1606,9 @@ function renderPersonalUploads(uploads) {
         html += '<button class="row-delete-btn" onclick="event.stopPropagation();confirmDeleteUpload(' + m.id + ')"><i class="fas fa-times"></i></button>';
         if (m.type === 'image') {
             galleryList.push({ url: m.url, materialId: m.id });
-            html += '<div class="upload-thumb"><img src="' + (m.thumb_url || m.url) + '" loading="lazy" onclick="handleUploadClick(event, this, \'' + m.url + '\', \'image\')"><span class="thumb-badge badge-image">图</span></div>';
+            html += '<div class="upload-thumb"><img src="' + (m.thumb_url || m.url) + '" loading="lazy" onerror="this.onerror=null;this.src=\'' + m.url + '\'" onclick="handleUploadClick(event, this, \'' + m.url + '\', \'image\')"><span class="thumb-badge badge-image">图</span></div>';
         } else {
-            html += '<div class="upload-thumb"><img src="' + (m.thumb_url || m.url) + '" loading="lazy" onclick="handleUploadClick(event, this, \'' + m.url + '\', \'video\')"><span class="video-icon">&#9658;</span><span class="thumb-badge badge-video">视</span></div>';
+            html += '<div class="upload-thumb"><img src="' + (m.thumb_url || m.url) + '" loading="lazy" onerror="this.onerror=null;this.src=\'' + m.url + '\'" onclick="handleUploadClick(event, this, \'' + m.url + '\', \'video\')"><span class="video-icon">&#9658;</span><span class="thumb-badge badge-video">视</span></div>';
         }
         html += '<div class="upload-info"><span class="upload-filename" title="' + escapeHtml(m.original_filename) + '">' + escapeHtml(m.original_filename) + '</span></div>';
         html += '</div>';
@@ -1381,12 +1666,19 @@ function handleFileSelect(e) {
 }
 
 
+var UPLOAD_IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.heic', '.bmp'];
+var UPLOAD_VIDEO_EXTS = ['.mp4', '.mov', '.avi', '.mkv', '.webm'];
+
+
 function uploadFiles(files) {
     var formData = new FormData();
     var count = 0;
     for (var i = 0; i < files.length; i++) {
         var file = files[i];
-        if (file.type.startsWith('image/') || file.type.startsWith('video/')) {
+        var ext = '.' + (file.name || '').split('.').pop().toLowerCase();
+        var isImage = file.type.startsWith('image/') || UPLOAD_IMAGE_EXTS.indexOf(ext) >= 0;
+        var isVideo = file.type.startsWith('video/') || UPLOAD_VIDEO_EXTS.indexOf(ext) >= 0;
+        if (isImage || isVideo) {
             formData.append('files', file);
             count++;
         }
